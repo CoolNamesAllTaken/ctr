@@ -1,0 +1,14 @@
+# Python
+*.pyc
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+staticfiles/
+
+# Environment
+.env.dev
+.env.prod
+
+# OS
+.DS_Store
