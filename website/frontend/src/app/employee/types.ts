@@ -23,3 +23,37 @@ export const DIRECTION_LABELS: Record<Direction, string> = {
   northbound: "Northbound (towards San Francisco)",
   southbound: "Southbound (towards Mountain View)",
 };
+
+// Money comes from the API as decimal strings, e.g. "6.25".
+
+export type Rider = {
+  id: number;
+  name: string;
+  card_uid: string | null;
+  balance: string | null;
+};
+
+export type Kiosk = {
+  id: number;
+  name: string;
+  station_id: number;
+  station_name: string;
+};
+
+export type Tap = {
+  id: number;
+  kind: "tap_on" | "tap_off";
+  card_uid: string;
+  rider_name: string | null;
+  station_name: string;
+  kiosk_name: string;
+  tap_time: string;
+  card_charge: string;
+  balance_after: string;
+};
+
+export type TapResult = {
+  tap: Tap;
+  from_station: string | null;
+  trip_fare: string | null;
+};
