@@ -34,7 +34,8 @@ class Train(models.Model):
 class Station(models.Model):
     name = models.CharField(max_length=100, unique=True)
     zone = models.PositiveSmallIntegerField()
-    # Order along the line, counting up from Loyola (south) to Magdalena (north).
+    # Order along the line, counting up from Mountain View (south) to
+    # San Francisco (north).
     position = models.PositiveSmallIntegerField(unique=True)
 
     class Meta:
