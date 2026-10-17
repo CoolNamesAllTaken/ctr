@@ -57,3 +57,13 @@ export type TapResult = {
   from_station: string | null;
   trip_fare: string | null;
 };
+
+export type Alert = {
+  id: number;
+  message: string;
+  // Null for an alert about the whole line.
+  train_id: number | null;
+  train_name: string | null;
+  is_active: boolean;
+  created_at: string;
+};
