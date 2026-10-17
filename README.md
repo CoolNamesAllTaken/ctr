@@ -2,7 +2,8 @@
 
 ## Software
 The data model supports the scenario where N (2, currently) train cars make
-scheduled runs northbound and southbound.
+scheduled runs northbound (towards San Francisco) and southbound (towards
+Mountain View).
 Riders tap NFC Chipper Cards on and off at station kiosks, and are charged by zone. Live delays will be computed by on-train GPS, and service alerts will explain them.
 
 The code lives in [`website/`](website/): a Django API (Django Ninja,
