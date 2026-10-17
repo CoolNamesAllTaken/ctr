@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { apiFetch } from "@/lib/api";
 import { NewTrainForm } from "./new-train-form";
 import { StarterDataButton } from "./starter-data-button";
+import { BackendUnreachable, mutedClass } from "./ui";
 import {
   DIRECTION_LABELS,
   type Station,
@@ -10,13 +11,13 @@ import {
   type TrainCar,
 } from "./types";
 
-export const metadata: Metadata = { title: "Employee portal · ctr" };
+export const metadata: Metadata = { title: "Trains · Employee portal · ctr" };
 
 function formatTime(time: string) {
   return time.slice(0, 5);
 }
 
-async function EmployeePortal() {
+async function TrainsTab() {
   let data: [TrainCar[], Station[], Train[]];
   try {
     data = await Promise.all([
@@ -25,7 +26,7 @@ async function EmployeePortal() {
       apiFetch<Train[]>("/api/trains/"),
     ]);
   } catch {
-    return <p className="text-red-600">Couldn&apos;t reach the backend.</p>;
+    return <BackendUnreachable />;
   }
   const [traincars, stations, trains] = data;
   const carNumbers = new Map(traincars.map((car) => [car.id, car.number]));
@@ -35,7 +36,7 @@ async function EmployeePortal() {
       <section className="flex flex-col gap-4">
         <h2 className="text-xl font-semibold">Add a scheduled train</h2>
         {traincars.length === 0 || stations.length < 2 ? (
-          <p className="text-zinc-600 dark:text-zinc-400">
+          <p className={mutedClass}>
             Add at least one train car and two stations before scheduling
             trains, either in the Django admin or by loading the starter data
             below.
@@ -48,7 +49,7 @@ async function EmployeePortal() {
       <section className="flex flex-col gap-4">
         <h2 className="text-xl font-semibold">Scheduled trains</h2>
         {trains.length === 0 ? (
-          <p className="text-zinc-600 dark:text-zinc-400">No trains yet.</p>
+          <p className={mutedClass}>No trains yet.</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {trains.map((train) => {
@@ -82,7 +83,7 @@ async function EmployeePortal() {
 
       <section className="flex flex-col gap-4">
         <h2 className="text-xl font-semibold">Starter data</h2>
-        <p className="text-zinc-600 dark:text-zinc-400">
+        <p className={mutedClass}>
           Adds two train cars, two stations, and two kiosks at each station.
           Only missing records are added; existing ones are left unchanged.
         </p>
@@ -92,18 +93,10 @@ async function EmployeePortal() {
   );
 }
 
-export default function EmployeePage() {
+export default function TrainsPage() {
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-4 py-10 font-sans">
-      <header>
-        <p className="text-sm text-zinc-500">ctr</p>
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Employee portal
-        </h1>
-      </header>
-      <Suspense fallback={<p className="text-zinc-500">Loading…</p>}>
-        <EmployeePortal />
-      </Suspense>
-    </main>
+    <Suspense fallback={<p className="text-zinc-500">Loading…</p>}>
+      <TrainsTab />
+    </Suspense>
   );
 }

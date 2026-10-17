@@ -2,12 +2,8 @@
 
 import { refresh } from "next/cache";
 import { ApiError, apiFetch } from "@/lib/api";
+import { type ActionState, errorState } from "./action-state";
 import type { Train } from "./types";
-
-export type ActionState =
-  | { status: "idle" }
-  | { status: "success"; message: string }
-  | { status: "error"; message: string };
 
 // TODO: check the employee's session here once employee login exists.
 export async function createTrain(
@@ -39,14 +35,10 @@ export async function createTrain(
       message: `Train ${train.name} added with ${train.arrivals.length} stops.`,
     };
   } catch (error) {
-    if (error instanceof ApiError && typeof error.detail === "string") {
-      // The form may be stale (e.g. a station was deleted since it loaded), so
-      // reload the station and car lists alongside the error.
-      refresh();
-      return { status: "error", message: error.detail };
-    }
-    console.error(error);
-    return { status: "error", message: "Couldn't add the train. Try again." };
+    // The form may be stale (e.g. a station was deleted since it loaded), so
+    // reload the station and car lists alongside the error.
+    if (error instanceof ApiError) refresh();
+    return errorState(error, "Couldn't add the train. Try again.");
   }
 }
 
@@ -71,10 +63,6 @@ export async function loadStarterData(): Promise<ActionState> {
         : "Starter data was already loaded.",
     };
   } catch (error) {
-    if (error instanceof ApiError && typeof error.detail === "string") {
-      return { status: "error", message: error.detail };
-    }
-    console.error(error);
-    return { status: "error", message: "Couldn't load starter data." };
+    return errorState(error, "Couldn't load starter data.");
   }
 }

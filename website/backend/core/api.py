@@ -1,10 +1,23 @@
-from datetime import time
+import re
+from datetime import datetime, time
+from decimal import Decimal
+from typing import Literal
 
 from django.db import IntegrityError, transaction
-from ninja import Router, Schema, Status
+from ninja import Field, Router, Schema, Status
 from ninja.errors import HttpError
 
-from core.models import Arrival, Station, Train, TrainCar
+from core import fares
+from core.models import (
+    Arrival,
+    ChipperCard,
+    Kiosk,
+    KioskTap,
+    Rider,
+    Station,
+    Train,
+    TrainCar,
+)
 from core.starter_data import load_starter_data
 
 router = Router()
@@ -132,3 +145,115 @@ def create_starter_data(request):
             "Starter data clashes with existing records (e.g. another station "
             "at the same position). Nothing was loaded.",
         ) from error
+
+
+class RiderIn(Schema):
+    name: str
+    card_uid: str
+    balance: Decimal = Field(ge=0, max_digits=8, decimal_places=2)
+
+
+class RiderOut(Schema):
+    id: int
+    name: str
+    card_uid: str | None = Field(None, alias="card.uid")
+    balance: Decimal | None = Field(None, alias="card.balance")
+
+
+def normalize_uid(uid):
+    """Card UIDs are stored as lowercase hex; readers often add separators."""
+    uid = re.sub(r"[\s:-]", "", uid).lower()
+    if not re.fullmatch(r"[0-9a-f]{1,32}", uid):
+        raise HttpError(422, "Card UID must be up to 32 hex digits.")
+    return uid
+
+
+@router.get("/riders/", response=list[RiderOut], auth=None)
+def list_riders(request):
+    return Rider.objects.select_related("card").order_by("name")
+
+
+@router.post("/riders/", response={201: RiderOut}, auth=None)
+def create_rider(request, payload: RiderIn):
+    """Set up a new rider with a new Chipper card."""
+    name = payload.name.strip()
+    if not name:
+        raise HttpError(422, "Rider name is required.")
+    uid = normalize_uid(payload.card_uid)
+    if ChipperCard.objects.filter(uid=uid).exists():
+        raise HttpError(422, "A card with that UID is already set up.")
+
+    with transaction.atomic():
+        card = ChipperCard.objects.create(uid=uid, balance=payload.balance)
+        rider = Rider.objects.create(name=name, card=card)
+    return Status(201, rider)
+
+
+class KioskOut(Schema):
+    id: int
+    name: str
+    station_id: int
+    station_name: str = Field(alias="station.name")
+
+
+@router.get("/kiosks/", response=list[KioskOut], auth=None)
+def list_kiosks(request):
+    return Kiosk.objects.select_related("station").order_by("station__position", "name")
+
+
+class TapIn(Schema):
+    card_uid: str
+    kiosk_id: int
+
+
+class TapOut(Schema):
+    id: int
+    kind: Literal["tap_on", "tap_off"]
+    card_uid: str = Field(alias="card.uid")
+    rider_name: str | None
+    station_name: str = Field(alias="kiosk.station.name")
+    kiosk_name: str = Field(alias="kiosk.name")
+    tap_time: datetime
+    card_charge: Decimal
+    balance_after: Decimal
+
+    @staticmethod
+    def resolve_kind(obj):
+        return "tap_on" if obj.card_charge > 0 else "tap_off"
+
+    @staticmethod
+    def resolve_rider_name(obj):
+        # A missing reverse one-to-one raises an AttributeError subclass.
+        rider = getattr(obj.card, "rider", None)
+        return rider.name if rider else None
+
+
+class TapResultOut(Schema):
+    tap: TapOut
+    # Set on tap-off: where the trip started and what it cost in the end.
+    from_station: str | None
+    trip_fare: Decimal | None
+
+
+@router.get("/taps/", response=list[TapOut], auth=None)
+def list_taps(request, limit: int = 20):
+    return KioskTap.objects.select_related("card__rider", "kiosk__station").order_by(
+        "-tap_time"
+    )[:limit]
+
+
+@router.post("/taps/", response={201: TapResultOut}, auth=None)
+def create_tap(request, payload: TapIn):
+    """Simulate a card tap at a kiosk, charging or refunding the fare."""
+    try:
+        tap, tap_on = fares.tap(normalize_uid(payload.card_uid), payload.kiosk_id)
+    except fares.FareError as error:
+        raise HttpError(422, str(error)) from error
+    return Status(
+        201,
+        {
+            "tap": tap,
+            "from_station": tap_on.kiosk.station.name if tap_on else None,
+            "trip_fare": tap_on.card_charge + tap.card_charge if tap_on else None,
+        },
+    )

@@ -1,16 +1,15 @@
 "use client";
 
 import { startTransition, useActionState, useRef, useState } from "react";
-import { createTrain, type ActionState } from "./actions";
+import type { ActionState } from "./action-state";
+import { createTrain } from "./actions";
 import {
   DIRECTION_LABELS,
   type Direction,
   type Station,
   type TrainCar,
 } from "./types";
-
-const inputClass =
-  "rounded-md border border-zinc-300 bg-transparent px-3 py-2 dark:border-zinc-700";
+import { ActionMessage, inputClass, primaryButtonClass } from "./ui";
 
 export function NewTrainForm({
   traincars,
@@ -131,21 +130,10 @@ export function NewTrainForm({
       </fieldset>
 
       <div className="flex items-center gap-4">
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-md bg-zinc-900 px-4 py-2 font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-        >
+        <button type="submit" disabled={pending} className={primaryButtonClass}>
           {pending ? "Adding…" : "Add train"}
         </button>
-        <p
-          aria-live="polite"
-          className={
-            state.status === "error" ? "text-red-600" : "text-emerald-600"
-          }
-        >
-          {state.status !== "idle" && state.message}
-        </p>
+        <ActionMessage state={state} />
       </div>
     </form>
   );
