@@ -18,11 +18,17 @@ working outside the containers (linting, adding dependencies) you'll also want
    ```sh
    make superuser
    ```
-3. Visit:
+3. Load the starter train cars, stations and kiosks from
+   `backend/core/starter_data.json` (or use the button on the employee page):
+   ```sh
+   make starter-data
+   ```
+4. Visit:
    - Frontend: http://localhost:3000
    - API: http://localhost:8000/api/health/
    - API docs: http://localhost:8000/api/docs
    - Admin: http://localhost:8000/admin/
+   - Employee portal: http://localhost:3000/employee
 
 Migrations are applied automatically when the `django` container starts. If
 port 8000 or 3000 is taken, export `DJANGO_PORT` / `FRONTEND_PORT` in your
@@ -32,20 +38,22 @@ shell before running any `make` command.
 
 Run `make` to list the commands.
 
-| Command           | What it does                                              |
-| ----------------- | --------------------------------------------------------- |
-| `make up`         | Build and start everything in the background              |
-| `make down`       | Stop and remove the containers (keeps the database)       |
-| `make logs`       | Follow logs from all services                             |
-| `make backend`    | Run Django + Postgres in the foreground                   |
-| `make frontend`   | Run the frontend (and the backend it needs) in foreground |
-| `make migrations` | Create migrations from model changes and apply them       |
-| `make superuser`  | Create an admin user                                      |
-| `make test`       | Run backend tests: `make test ARGS="-k health"`           |
-| `make format`     | Auto-fix lint issues and format backend and frontend      |
+| Command             | What it does                                              |
+| ------------------- | --------------------------------------------------------- |
+| `make up`           | Build and start everything in the background              |
+| `make down`         | Stop and remove the containers (keeps the database)       |
+| `make logs`         | Follow logs from all services                             |
+| `make backend`      | Run Django + Postgres in the foreground                   |
+| `make frontend`     | Run the frontend (and the backend it needs) in foreground |
+| `make migrations`   | Create migrations from model changes and apply them       |
+| `make superuser`    | Create an admin user                                      |
+| `make starter-data` | Add starter cars, stations and kiosks (if missing)        |
+| `make test`         | Run backend tests: `make test ARGS="-k health"`           |
+| `make format`       | Auto-fix lint issues and format backend and frontend      |
 
-`migrations`, `superuser` and `test` run inside the containers, so the stack
-must be up. `format` runs on the host and needs the host dependencies below.
+`migrations`, `superuser`, `starter-data` and `test` run inside the containers,
+so the stack must be up. `format` runs on the host and needs the host
+dependencies below.
 
 Anything else goes through compose directly, for example:
 

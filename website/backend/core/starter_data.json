@@ -1,0 +1,20 @@
+{
+  "traincars": [
+    { "number": "1", "capacity": 20 },
+    { "number": "2", "capacity": 20 }
+  ],
+  "stations": [
+    {
+      "name": "Mountain View",
+      "zone": 2,
+      "position": 0,
+      "kiosks": ["Northbound platform", "Southbound platform"]
+    },
+    {
+      "name": "San Francisco",
+      "zone": 1,
+      "position": 1,
+      "kiosks": ["Northbound platform", "Southbound platform"]
+    }
+  ]
+}
