@@ -95,9 +95,17 @@ mfrc522_status_t mfrc522_transceive(const uint8_t *tx, uint8_t tx_len,
  * out[0] = CRC low byte, out[1] = CRC high byte (ISO14443A transmission order). */
 mfrc522_status_t mfrc522_calc_crc(const uint8_t *data, uint8_t len, uint8_t out[2]);
 
+/* Append CRC_A over buf[0..len) as buf[len], buf[len+1]. */
+mfrc522_status_t mfrc522_append_crc(uint8_t *buf, uint8_t len);
+
+/* Check that the last two bytes of buf[0..len) are a valid CRC_A over the rest.
+ * Returns MFRC522_ERR_CRC on mismatch (or when len < 2). */
+mfrc522_status_t mfrc522_check_crc(const uint8_t *buf, uint8_t len);
+
 /*
  * MIFARE Classic authentication. key_cmd is 0x60 (key A) or 0x61 (key B).
- * key is 6 bytes; uid is the first 4 bytes of the tag UID. Returns MFRC522_OK
+ * key is 6 bytes; uid is the 4 UID bytes used for auth (the last 4 of a
+ * 7-byte UID). Returns MFRC522_OK
  * when the crypto handshake succeeds (Status2Reg.MFCrypto1On set).
  */
 mfrc522_status_t mfrc522_mifare_auth(uint8_t key_cmd, uint8_t block,

@@ -204,6 +204,19 @@ mfrc522_status_t mfrc522_calc_crc(const uint8_t *data, uint8_t len, uint8_t out[
     return MFRC522_ERR_TIMEOUT;
 }
 
+mfrc522_status_t mfrc522_append_crc(uint8_t *buf, uint8_t len) {
+    return mfrc522_calc_crc(buf, len, &buf[len]);
+}
+
+mfrc522_status_t mfrc522_check_crc(const uint8_t *buf, uint8_t len) {
+    if (len < 2) return MFRC522_ERR_CRC;
+    uint8_t want[2];
+    mfrc522_status_t st = mfrc522_calc_crc(buf, (uint8_t)(len - 2), want);
+    if (st != MFRC522_OK) return st;
+    if (want[0] != buf[len - 2] || want[1] != buf[len - 1]) return MFRC522_ERR_CRC;
+    return MFRC522_OK;
+}
+
 /* ---- MIFARE auth ---------------------------------------------------------- */
 mfrc522_status_t mfrc522_mifare_auth(uint8_t key_cmd, uint8_t block,
                                      const uint8_t key[6], const uint8_t uid[4]) {

@@ -129,3 +129,35 @@ void iso14443a_halt(void) {
     mfrc522_transceive(buf, 4, 0, rx, &rx_len, &rx_bits);
     mfrc522_stop_crypto1();
 }
+
+mfrc522_status_t iso14443a_rats(uint8_t *ats, uint8_t cap, uint8_t *ats_len) {
+    /* E0, then FSDI=5 (FSD 64) in the high nibble and CID 0 in the low. */
+    uint8_t buf[4] = { 0xE0, 0x50, 0, 0 };
+    mfrc522_status_t st = mfrc522_append_crc(buf, 2);
+    if (st != MFRC522_OK) return st;
+
+    uint8_t rx[64];
+    uint8_t rx_len = sizeof(rx);
+    uint8_t rx_bits = 0;
+    st = mfrc522_transceive(buf, 4, 0, rx, &rx_len, &rx_bits);
+    if (st != MFRC522_OK) return st;
+    if (rx_len < 3) return MFRC522_ERR_COMM;
+    st = mfrc522_check_crc(rx, rx_len);
+    if (st != MFRC522_OK) return st;
+
+    uint8_t n = (uint8_t)(rx_len - 2);
+    if (rx[0] != n || n > cap) return MFRC522_ERR_COMM; /* TL counts itself */
+    memcpy(ats, rx, n);
+    *ats_len = n;
+    return MFRC522_OK;
+}
+
+void iso14443a_deselect_l4(void) {
+    uint8_t buf[3] = { 0xC2, 0, 0 }; /* S(DESELECT), no CID */
+    if (mfrc522_append_crc(buf, 1) != MFRC522_OK) return;
+    /* The card echoes S(DESELECT); either way it's done with us. */
+    uint8_t rx[3];
+    uint8_t rx_len = sizeof(rx);
+    uint8_t rx_bits = 0;
+    mfrc522_transceive(buf, 3, 0, rx, &rx_len, &rx_bits);
+}

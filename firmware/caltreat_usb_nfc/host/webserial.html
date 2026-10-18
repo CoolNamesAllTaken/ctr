@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RC522 Bridge</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5f6b7a;
+    --border: #d9dee5; --accent: #2563eb; --accent-text: #ffffff;
+    --ok: #15803d; --warn: #b45309; --err: #b91c1c;
+    --code-bg: #f1f3f6; --trailer: #7c3aed; --key: #0e7490;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --text: #e6e9ee; --muted: #9aa5b4;
+      --border: #2a313b; --accent: #3b82f6; --accent-text: #ffffff;
+      --ok: #4ade80; --warn: #fbbf24; --err: #f87171;
+      --code-bg: #11151a; --trailer: #a78bfa; --key: #22d3ee;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+           padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { font-size: 17px; margin: 0; }
+  .pill { font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .pill.on { color: var(--ok); border-color: currentColor; }
+  header .spacer { flex: 1; }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  section h2 { font-size: 14px; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+  label { color: var(--muted); font-size: 13px; }
+  input, select, textarea { font: inherit; color: var(--text); background: var(--code-bg);
+          border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+  input.hex, textarea, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  input[type=number] { width: 80px; }
+  textarea { width: 100%; resize: vertical; }
+  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
+           background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .45; cursor: default; }
+  .notice { padding: 10px 12px; border-radius: 6px; border: 1px solid var(--warn); color: var(--warn); margin: 16px 20px 0; }
+  .status { min-height: 1.4em; font-size: 13px; color: var(--muted); }
+  .status.err { color: var(--err); }
+  .status.ok { color: var(--ok); }
+  dl.card { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 8px 0 0; }
+  dl.card dt { color: var(--muted); }
+  dl.card dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  .muted { color: var(--muted); }
+  .dump { width: 100%; overflow-x: auto; }
+  .dump table { border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .dump td { padding: 1px 8px 1px 0; white-space: nowrap; }
+  .dump tr.sector-start td { border-top: 1px solid var(--border); padding-top: 4px; }
+  .dump .blk { color: var(--muted); text-align: right; }
+  .dump .missing { color: var(--muted); }
+  .dump .ka, .dump .kb { color: var(--key); }
+  .dump .acl { color: var(--trailer); }
+  #log { height: 520px; overflow: auto; background: var(--code-bg); border: 1px solid var(--border);
+         border-radius: 6px; padding: 8px; margin: 0; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+  #log .tx { color: var(--accent); }
+  #log .rx { color: var(--ok); }
+  #log .err { color: var(--err); }
+  progress { width: 160px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RC522 Bridge</h1>
+  <span id="connState" class="pill">Disconnected</span>
+  <span id="fwInfo" class="muted"></span>
+  <span class="spacer"></span>
+  <button id="btnConnect" class="primary">Connect</button>
+</header>
+
+<div id="unsupported" class="notice" hidden>
+  This browser has no Web Serial support. Open this file in Chrome or Edge on a desktop.
+</div>
+
+<main>
+  <div>
+    <section>
+      <h2>Card</h2>
+      <div class="row">
+        <button id="btnScan" data-needs-conn>Read card</button>
+        <label><input type="checkbox" id="chkWatch" data-needs-conn> Watch for cards</label>
+      </div>
+      <div id="cardStatus" class="status">Place a card on the reader.</div>
+      <dl class="card" id="cardInfo" hidden>
+        <dt>UID</dt><dd id="cUid"></dd>
+        <dt>ATQA</dt><dd id="cAtqa"></dd>
+        <dt>SAK</dt><dd id="cSak"></dd>
+        <dt>Type</dt><dd id="cType"></dd>
+        <dt>ATS</dt><dd id="cAts"></dd>
+      </dl>
+    </section>
+
+    <section>
+      <h2>MIFARE Classic keys</h2>
+      <div class="row">
+        <label for="keys">Keys to try, one per line (12 hex digits)</label>
+      </div>
+      <textarea id="keys" rows="4" spellcheck="false">FFFFFFFFFFFF
+A0A1A2A3A4A5
+D3F7D3F7D3F7
+000000000000</textarea>
+      <div class="row muted">Each key is tried as key B, then key A.</div>
+    </section>
+
+    <section>
+      <h2>Block</h2>
+      <div class="row">
+        <label for="blockNo">Block</label>
+        <input type="number" id="blockNo" min="0" max="255" value="4">
+        <button id="btnRead" data-needs-conn>Read</button>
+      </div>
+      <div class="row">
+        <input id="blockData" class="hex" size="40" maxlength="47" spellcheck="false"
+               placeholder="32 hex digits (16 bytes)">
+        <button id="btnWrite" data-needs-conn>Write</button>
+      </div>
+      <div class="row">
+        <label for="valueAmt">Value</label>
+        <input type="number" id="valueAmt" value="1" step="1">
+        <button id="btnValRead" data-needs-conn>Read value</button>
+        <button id="btnValInit" data-needs-conn>Set as value block</button>
+        <button id="btnValInc" data-needs-conn>Increment</button>
+        <button id="btnValDec" data-needs-conn>Decrement</button>
+      </div>
+      <div id="blockStatus" class="status"></div>
+    </section>
+
+    <section>
+      <h2>Dump card</h2>
+      <div class="row">
+        <label for="dumpSize">Size</label>
+        <select id="dumpSize">
+          <option value="5">Mini (5 sectors)</option>
+          <option value="16" selected>1K (16 sectors)</option>
+          <option value="32">2K (32 sectors)</option>
+          <option value="40">4K (40 sectors)</option>
+        </select>
+        <button id="btnDump" data-needs-conn>Dump</button>
+        <button id="btnSave" disabled>Save .mfd</button>
+        <progress id="dumpProgress" value="0" max="1" hidden></progress>
+      </div>
+      <div id="dumpStatus" class="status"></div>
+      <div class="dump" id="dumpOut"></div>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <div class="row">
+        <h2 style="margin:0">Log</h2>
+        <span class="spacer" style="flex:1"></span>
+        <label><input type="checkbox" id="chkRaw"> Raw PN532 frames</label>
+        <button id="btnClear">Clear</button>
+      </div>
+      <pre id="log"></pre>
+    </section>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"
+        integrity="sha384-H6KKS1H1WwuERMSm+54dYLzjg0fKqRK5ZRyASdbrI/lwrCc6bXEmtGYr5SwvP1pZ"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/pn532.js@0.1.19/dist/pn532.min.js"
+        integrity="sha384-nvKAiTXiFkea76vwciy9iH9jlulf88ucGXL2VhG+CAusJf+ScPVzZYXkyk4fIm/F"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/pn532.js@0.1.19/dist/plugin/WebserialAdapter.min.js"
+        integrity="sha384-2XtmuhGPj41wl6QbMG3599qFjhADnqRMtizGeCSdYdpJZEtcVnPDR1nS74CIUX3E"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/pn532.js@0.1.19/dist/plugin/Hf14a.min.js"
+        integrity="sha384-6GqspnEg9VHWCNXPkx181fzS0kMJyEevXzD2Wsyh9psrkZPa1kTfzsnrHFquEvGa"
+        crossorigin="anonymous"></script>
+<script>
+/*
+ * Web Serial front end for the RC522 -> PN532 bridge firmware, built on stock
+ * pn532.js (https://github.com/taichunmin/pn532.js): its Web Serial adapter for
+ * the connection and its Hf14a plugin for the MIFARE operations.
+ *
+ * The one shim: pn532.js's adapter only offers USB-serial chips (CH340,
+ * CP210x, PL2303) in the port picker, so requestPort is wrapped to also offer
+ * the bridge's 2E8A:000B.
+ *
+ * pn532.js limitations the page works within:
+ *  - Hf14a authenticates with the first 4 UID bytes, but 7-byte-UID cards need
+ *    the last 4, so key operations fail on them (the page warns).
+ *  - mfReadCardByKeys assumes 4-block sectors, so a 4K card's 16-block sectors
+ *    (32-39) are read a block at a time instead.
+ *  - The adapter pipes the port into its Pn532 instance and can't release it,
+ *    so each connection uses a new instance and Disconnect may reload the page.
+ *  - With no card present, Hf14a's target parser throws "invalid hf14a target
+ *    format" instead of reporting no targets: it looks the zero-target layout
+ *    up as 0b0000 with _.find, and then treats the 0 it gets back as "not
+ *    found". isNoCard() reads that error as "no card".
+ */
+'use strict'
+const { Pn532, Packet } = window.Pn532
+const { Pn532WebserialAdapter, Pn532Hf14a } = window
+
+const BRIDGE_FILTER = { usbVendorId: 0x2E8A, usbProductId: 0x000B }
+
+if (navigator.serial) {
+  const requestPort = navigator.serial.requestPort.bind(navigator.serial)
+  navigator.serial.requestPort = (opts = {}) =>
+    requestPort({ ...opts, filters: [...(opts.filters ?? []), BRIDGE_FILTER] })
+}
+
+const $ = id => document.getElementById(id)
+const hex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('').toUpperCase()
+const spacedHex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(' ').toUpperCase()
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+/* ---- log ---- */
+const logEl = $('log')
+function log (kind, text) {
+  if ((kind === 'tx' || kind === 'rx') && !$('chkRaw').checked) return
+  const line = document.createElement('div')
+  line.className = kind
+  const t = new Date().toLocaleTimeString([], { hour12: false })
+  const tag = { tx: '→', rx: '←', err: '!', info: '·' }[kind] ?? '·'
+  line.textContent = `${t} ${tag} ${text}`
+  const atBottom = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 4
+  logEl.appendChild(line)
+  while (logEl.childElementCount > 1000) logEl.firstChild.remove()
+  if (atBottom) logEl.scrollTop = logEl.scrollHeight
+}
+$('btnClear').onclick = () => { logEl.textContent = '' }
+
+/* ---- reader ---- */
+let pn532 = null
+
+async function newReader () {
+  const reader = new Pn532()
+  await reader.use(new Pn532WebserialAdapter())
+  await reader.use(new Pn532Hf14a())
+  // Same hooks pn532.js's LoggerRxTx plugin uses, but into the page's log.
+  reader.addMiddleware('writePacket', async (ctx, next) => {
+    log('tx', spacedHex(ctx.pack))
+    return await next()
+  })
+  reader.addMiddleware('readRespTimeout', async (ctx, next) => {
+    const resp = await next()
+    log('rx', spacedHex(resp.pack))
+    return resp
+  })
+  return reader
+}
+
+/* ---- serialise reader access: one command sequence at a time ---- */
+let queue = Promise.resolve()
+function exclusive (fn) {
+  const run = queue.then(fn)
+  queue = run.catch(() => {})
+  return run
+}
+
+/* ---- connection ---- */
+let connected = false
+let busy = false
+
+function setConnected (on, info = '') {
+  connected = on
+  $('connState').textContent = on ? 'Connected' : 'Disconnected'
+  $('connState').classList.toggle('on', on)
+  $('fwInfo').textContent = info
+  $('btnConnect').textContent = on ? 'Disconnect' : 'Connect'
+  $('btnConnect').classList.toggle('primary', !on)
+  updateButtons()
+}
+
+function updateButtons () {
+  for (const el of document.querySelectorAll('[data-needs-conn]')) el.disabled = !connected || (busy && el.tagName === 'BUTTON')
+}
+
+$('btnConnect').onclick = async () => {
+  if (connected) {
+    stopWatch()
+    try {
+      await exclusive(() => pn532.$adapter.disconnect())
+      setConnected(false)
+      log('info', 'Disconnected')
+    } catch (err) {
+      // The adapter can't close a port whose stream it has piped; unloading
+      // the page releases it.
+      location.reload()
+    }
+    return
+  }
+  try {
+    pn532 = await newReader()
+    await pn532.$adapter.connect() // port picker, then wakeup + resetSettings
+    const fw = await pn532.getFirmwareVersion()
+    // Try once, plus one retry, so card selection answers quickly when no card
+    // is present instead of waiting for one (the PN532 default).
+    await pn532.rfSetMaxRetries({ passiveActivation: 0x01 })
+    setConnected(true, `${fw.ic} v${fw.firmware}`)
+    log('info', `Connected: ${fw.ic} firmware ${fw.firmware}`)
+  } catch (err) {
+    setConnected(false)
+    if (err.name === 'NotFoundError') return // picker cancelled
+    log('err', `Connect failed: ${err.message}. Reload the page before trying again.`)
+  }
+}
+
+navigator.serial?.addEventListener('disconnect', () => {
+  // The adapter's own listener marks itself closed when its port goes away.
+  setTimeout(() => {
+    if (!connected || pn532?.$adapter?.isOpen()) return
+    stopWatch()
+    setConnected(false)
+    log('err', 'Device unplugged')
+  })
+})
+
+/* ---- UI action wrapper ---- */
+async function action (statusEl, fn) {
+  busy = true
+  updateButtons()
+  setStatus(statusEl, 'Working…')
+  try {
+    await exclusive(fn)
+  } catch (err) {
+    setStatus(statusEl, err.message, 'err')
+    log('err', err.message)
+  } finally {
+    busy = false
+    updateButtons()
+  }
+}
+
+function setStatus (el, text, kind = '') {
+  el.textContent = text
+  el.className = `status ${kind}`
+}
+
+/* ---- MIFARE helpers on top of the Hf14a plugin ---- */
+/* Hf14a's errors when no card answers (see the header comment). The bridge
+ * always sends well-formed target data, so the second only means "no card". */
+const isNoCard = err => ['Failed to select card', 'invalid hf14a target format'].includes(err?.message)
+
+function cardType (sak) {
+  return {
+    0x00: 'MIFARE Ultralight / NTAG',
+    0x08: 'MIFARE Classic 1K',
+    0x09: 'MIFARE Mini',
+    0x10: 'MIFARE Plus 2K (SL2)',
+    0x11: 'MIFARE Plus 4K (SL2)',
+    0x18: 'MIFARE Classic 4K',
+    0x20: 'ISO14443-4 (DESFire, Plus SL3, bank card, phone…)',
+    0x28: 'MIFARE Classic 1K emulation + ISO14443-4',
+    0x38: 'MIFARE Classic 4K emulation + ISO14443-4',
+    0x88: 'MIFARE Classic 1K (Infineon)',
+  }[sak] ?? 'Unknown'
+}
+
+const sectorCountForSak = sak => ({ 0x09: 5, 0x08: 16, 0x28: 16, 0x88: 16, 0x10: 32, 0x18: 40, 0x38: 40 }[sak])
+const sectorOf = block => block < 128 ? block >> 2 : 32 + ((block - 128) >> 4)
+const firstBlock = sector => sector < 32 ? sector * 4 : 128 + (sector - 32) * 16
+const blocksIn = sector => sector < 32 ? 4 : 16
+const isTrailer = block => block === firstBlock(sectorOf(block)) + blocksIn(sectorOf(block)) - 1
+
+function parseHex (text, len, what) {
+  const clean = text.replace(/[\s:,-]/g, '')
+  if (!/^[0-9a-fA-F]*$/.test(clean) || clean.length !== len * 2) throw new Error(`${what} must be ${len * 2} hex digits`)
+  return Packet.fromHex(clean)
+}
+
+function keysToTry () {
+  const keys = $('keys').value.split('\n').map(s => s.trim()).filter(Boolean)
+    .map((k, i) => parseHex(k, 6, `Key on line ${i + 1}`))
+  if (!keys.length) throw new Error('Enter at least one key')
+  return keys
+}
+
+/* Run fn with each candidate until one succeeds. Returns { cand, result }, or
+ * null if none worked. Stops early when there's no card or the port closed. */
+async function tryEach (cands, fn) {
+  for (const cand of cands) {
+    try {
+      return { cand, result: await fn(cand) }
+    } catch (err) {
+      if (isNoCard(err)) throw new Error('No card on the reader')
+      if (!pn532.$adapter.isOpen()) throw err
+    }
+  }
+  return null
+}
+
+const readBlockWith = (block, key) => pn532.$hf14a.mfReadBlockKeyBA({ block, ka: key, kb: key })
+
+/* ---- value blocks ---- */
+function decodeValue (b) {
+  const dv = new DataView(b.buffer, b.byteOffset, 16)
+  const v = dv.getInt32(0, true)
+  const ok = dv.getInt32(8, true) === v && dv.getInt32(4, true) === ~v &&
+    b[12] === b[14] && b[13] === b[15] && b[13] === (~b[12] & 0xFF)
+  return ok ? { value: v, addr: b[12] } : null
+}
+
+function encodeValue (value, addr) {
+  const b = new Packet(16)
+  b.setInt32(0, value)
+  b.setInt32(4, ~value)
+  b.setInt32(8, value)
+  b[12] = b[14] = addr & 0xFF
+  b[13] = b[15] = ~addr & 0xFF
+  return b
+}
+
+/* ---- card panel ---- */
+function showCard (card) {
+  $('cardInfo').hidden = !card
+  if (!card) return
+  $('cUid').textContent = `${spacedHex(card.uid)}  (${card.uid.length} bytes)`
+  $('cAtqa').textContent = spacedHex(card.atqa)
+  $('cSak').textContent = spacedHex(card.sak)
+  $('cType').textContent = cardType(card.sak[0])
+  $('cAts').textContent = card.rats?.length ? spacedHex(card.rats) : '—'
+  const sectors = sectorCountForSak(card.sak[0])
+  if (sectors) $('dumpSize').value = String(sectors)
+}
+
+function cardNote (card) {
+  return card.uid.length === 4
+    ? 'Card found.'
+    : 'Card found. Its UID is longer than 4 bytes, and pn532.js authenticates with the first 4, so key operations will fail on it.'
+}
+
+async function selectCard () {
+  try {
+    return (await pn532.$hf14a.mfSelectCard({ timeout: 3000 })) ?? null
+  } catch (err) {
+    if (isNoCard(err)) return null
+    throw err
+  }
+}
+
+$('btnScan').onclick = () => action($('cardStatus'), async () => {
+  const card = await selectCard()
+  showCard(card)
+  if (card) {
+    setStatus($('cardStatus'), cardNote(card), card.uid.length === 4 ? 'ok' : '')
+    log('info', `Card ${hex(card.uid)} SAK ${spacedHex(card.sak)}`)
+  } else {
+    setStatus($('cardStatus'), 'No card on the reader.')
+  }
+})
+
+let watching = false
+async function watchLoop () {
+  let lastUid = null
+  while (watching) {
+    try {
+      const card = await exclusive(selectCard)
+      const uid = card ? hex(card.uid) : null
+      if (uid !== lastUid) {
+        lastUid = uid
+        showCard(card)
+        setStatus($('cardStatus'), card ? cardNote(card) : 'Watching… place a card on the reader.', card && card.uid.length === 4 ? 'ok' : '')
+        log('info', card ? `Card ${uid} arrived` : 'Card removed')
+      }
+    } catch (err) {
+      if (!connected) break
+      log('err', err.message)
+    }
+    await sleep(300)
+  }
+}
+
+function stopWatch () {
+  watching = false
+  $('chkWatch').checked = false
+}
+
+$('chkWatch').onchange = () => {
+  watching = $('chkWatch').checked
+  if (watching) {
+    setStatus($('cardStatus'), 'Watching… place a card on the reader.')
+    watchLoop()
+  } else {
+    setStatus($('cardStatus'), '')
+  }
+}
+
+/* ---- block panel ---- */
+function blockNumber () {
+  const n = Number($('blockNo').value)
+  if (!Number.isInteger(n) || n < 0 || n > 255) throw new Error('Block must be 0–255')
+  return n
+}
+
+function showBlock (block, data, key) {
+  $('blockData').value = spacedHex(data)
+  const val = decodeValue(data)
+  const extra = val ? ` Value block: ${val.value} (addr ${val.addr}).` : ''
+  setStatus($('blockStatus'), `Block ${block} read with key ${hex(key)}.${extra}`, 'ok')
+}
+
+async function readBlock (block) {
+  const hit = await tryEach(keysToTry(), key => readBlockWith(block, key))
+  if (!hit) throw new Error(`None of the keys could read block ${block}`)
+  return { data: hit.result, key: hit.cand }
+}
+
+$('btnRead').onclick = () => action($('blockStatus'), async () => {
+  const block = blockNumber()
+  const { data, key } = await readBlock(block)
+  showBlock(block, data, key)
+})
+$('btnValRead').onclick = $('btnRead').onclick
+
+async function writeBlock (block, data) {
+  if ((block === 0 || isTrailer(block)) && !confirm(block === 0
+    ? 'Block 0 holds the UID and manufacturer data. On a normal card the write will fail; on a "magic" card it changes the UID. Continue?'
+    : `Block ${block} is a sector trailer (keys and access bits). A bad value can lock the sector permanently. Continue?`)) {
+    throw new Error('Write cancelled')
+  }
+  const hit = await tryEach(keysToTry(), key => pn532.$hf14a.mfWriteBlockKeyBA({ block, ka: key, kb: key, data }))
+  if (!hit) throw new Error(`None of the keys could write block ${block}`)
+  const back = await readBlockWith(block, hit.cand)
+  if (!isTrailer(block) && hex(back) !== hex(data)) throw new Error(`Block ${block} reads back differently: ${spacedHex(back)}`)
+  showBlock(block, back, hit.cand)
+  setStatus($('blockStatus'), `Wrote block ${block} with key ${hex(hit.cand)}.`, 'ok')
+  log('info', `Wrote block ${block}: ${spacedHex(data)}`)
+}
+
+$('btnWrite').onclick = () => action($('blockStatus'), async () => {
+  await writeBlock(blockNumber(), parseHex($('blockData').value, 16, 'Block data'))
+})
+
+function amount () {
+  const n = Number($('valueAmt').value)
+  if (!Number.isInteger(n) || n < -2147483648 || n > 2147483647) throw new Error('Value must be a 32-bit integer')
+  return n
+}
+
+$('btnValInit').onclick = () => action($('blockStatus'), async () => {
+  const block = blockNumber()
+  if (block === 0 || isTrailer(block)) throw new Error('Pick a data block, not block 0 or a sector trailer')
+  await writeBlock(block, encodeValue(amount(), block))
+})
+
+async function valueOp (fnName) {
+  const block = blockNumber()
+  const int32 = amount()
+  if (int32 < 0) throw new Error('Use a positive amount; pick Increment or Decrement for the direction')
+  const { data, key } = await readBlock(block)
+  const before = decodeValue(data)
+  if (!before) throw new Error(`Block ${block} isn't a value block. Use "Set as value block" first.`)
+  // The increment/decrement helpers take an explicit key type, so try B then A.
+  const hit = await tryEach([1, 0], isKb => pn532.$hf14a[fnName]({
+    src: { block, isKb, key },
+    dist: { block, isKb, key },
+    int32,
+  }))
+  if (!hit) throw new Error(`Key ${hex(key)} can read block ${block} but not change its value (check the access bits)`)
+  const back = await readBlockWith(block, key)
+  showBlock(block, back, key)
+  const after = decodeValue(back)
+  setStatus($('blockStatus'), `Block ${block}: ${before.value} → ${after?.value}.`, 'ok')
+  log('info', `Value block ${block}: ${before.value} → ${after?.value}`)
+}
+
+$('btnValInc').onclick = () => action($('blockStatus'), () => valueOp('mfIncrementBlock'))
+$('btnValDec').onclick = () => action($('blockStatus'), () => valueOp('mfDecrementBlock'))
+
+/* ---- dump ---- */
+let lastDump = null
+
+function renderDump (blocks, sectorLabels) {
+  const table = document.createElement('table')
+  blocks.forEach((data, block) => {
+    const tr = table.insertRow()
+    const sector = sectorOf(block)
+    if (block === firstBlock(sector)) tr.className = 'sector-start'
+    const num = tr.insertCell()
+    num.className = 'blk'
+    num.textContent = block
+    const cell = tr.insertCell()
+    if (!data) {
+      cell.className = 'missing'
+      cell.textContent = '-- '.repeat(16).trim()
+    } else if (isTrailer(block)) {
+      for (const [cls, from, to] of [['ka', 0, 6], ['acl', 6, 10], ['kb', 10, 16]]) {
+        const span = document.createElement('span')
+        span.className = cls
+        span.textContent = spacedHex(data.subarray(from, to)) + ' '
+        cell.appendChild(span)
+      }
+    } else {
+      cell.textContent = spacedHex(data)
+    }
+    const ascii = tr.insertCell()
+    ascii.className = 'muted'
+    ascii.textContent = data ? Array.from(data, b => (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : '.').join('') : ''
+    if (block === firstBlock(sector)) {
+      const note = tr.insertCell()
+      note.className = 'muted'
+      note.textContent = `sector ${sector}: ${sectorLabels[sector]}`
+    }
+  })
+  $('dumpOut').replaceChildren(table)
+}
+
+$('btnDump').onclick = () => action($('dumpStatus'), async () => {
+  const sectors = Number($('dumpSize').value)
+  const keys = keysToTry()
+  const total = firstBlock(sectors - 1) + blocksIn(sectors - 1)
+  const blocks = new Array(total).fill(null)
+  const sectorLabels = new Array(sectors).fill('no key')
+  const progress = $('dumpProgress')
+  progress.hidden = false
+  try {
+    // 4-block sectors (all of a Mini/1K/2K card, sectors 0-31 of a 4K card).
+    progress.removeAttribute('value') // indeterminate: the plugin reports no progress
+    setStatus($('dumpStatus'), `Reading sectors 0–${Math.min(sectors, 32) - 1}…`)
+    let res
+    try {
+      res = await pn532.$hf14a.mfReadCardByKeys({ sectorMax: Math.min(sectors, 32), keys })
+    } catch (err) {
+      throw isNoCard(err) ? new Error('No card on the reader') : err
+    }
+    for (let b = 0; b < res.success.read.length; b++) {
+      if (res.success.read[b]) blocks[b] = res.data.subarray(b * 16, b * 16 + 16)
+    }
+    for (let s = 0; s < Math.min(sectors, 32); s++) {
+      const [ka, kb] = [res.success.key[s * 2], res.success.key[s * 2 + 1]]
+      if (ka || kb) sectorLabels[s] = [ka && `A ${hex(ka)}`, kb && `B ${hex(kb)}`].filter(Boolean).join(', ')
+    }
+
+    // A 4K card's 16-block sectors, which mfReadCardByKeys can't address.
+    progress.max = sectors
+    for (let s = 32; s < sectors; s++) {
+      progress.value = s
+      setStatus($('dumpStatus'), `Reading sector ${s} of ${sectors - 1}…`)
+      const hit = await tryEach(keys, key => readBlockWith(firstBlock(s), key))
+      if (!hit) continue
+      sectorLabels[s] = `key ${hex(hit.cand)}`
+      blocks[firstBlock(s)] = hit.result
+      for (let b = firstBlock(s) + 1; b < firstBlock(s) + 16; b++) {
+        try {
+          blocks[b] = await readBlockWith(b, hit.cand)
+        } catch (err) {
+          if (isNoCard(err)) throw new Error('Card removed')
+        }
+      }
+    }
+  } finally {
+    progress.hidden = true
+  }
+  const card = await selectCard()
+  lastDump = { uid: card ? hex(card.uid) : 'card', blocks }
+  renderDump(blocks, sectorLabels)
+  const readCount = blocks.filter(Boolean).length
+  const keyed = sectorLabels.filter(l => l !== 'no key').length
+  setStatus($('dumpStatus'), `Read ${readCount} of ${total} blocks; ${keyed} of ${sectors} sectors had a working key.`,
+    keyed === sectors ? 'ok' : '')
+  $('btnSave').disabled = false
+  log('info', `Dumped ${lastDump.uid}: ${readCount}/${total} blocks`)
+})
+
+$('btnSave').onclick = () => {
+  if (!lastDump) return
+  // .mfd: raw blocks in order; unread blocks are zero-filled.
+  const out = new Uint8Array(lastDump.blocks.length * 16)
+  lastDump.blocks.forEach((b, i) => { if (b) out.set(b, i * 16) })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([out], { type: 'application/octet-stream' }))
+  a.download = `${lastDump.uid}.mfd`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+/* ---- startup ---- */
+if (!('serial' in navigator)) {
+  $('unsupported').hidden = false
+  $('btnConnect').disabled = true
+}
+setConnected(false)
+log('info', 'Ready. Plug in the bridge and press Connect.')
+</script>
+</body>
+</html>

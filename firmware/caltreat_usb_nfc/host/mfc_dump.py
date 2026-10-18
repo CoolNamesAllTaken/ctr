@@ -5,7 +5,7 @@ Authenticates each sector with a key you supply (default: the factory key
 FFFFFFFFFFFF) and reads every block. Prints a hex dump and optionally writes a
 .mfd (raw 1K/4K binary, the format libnfc's nfc-mfclassic and NFCToolsGUI use).
 
-    python mfc_dump.py --port /dev/tty.usbmodemXXXX3
+    python mfc_dump.py --port /dev/tty.usbmodemXXXX1
     python mfc_dump.py --port ... --key A0A1A2A3A4A5 --out card.mfd
 """
 import argparse

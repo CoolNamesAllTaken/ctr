@@ -6,8 +6,9 @@
  * Parser states. After the 00 00 FF start code we peek one byte to classify the
  * frame:
  *   0x00 -> next must be 0xFF => ACK   (00 00 FF 00 FF 00)
- *   0xFF -> next may be 0x00 => NACK   (00 00 FF FF 00 00)
- *                or extended length    (00 00 FF FF FF LENH LENL LCS ...)
+ *   0xFF -> next 0x00 => NACK           (00 00 FF FF 00 00)
+ *           next 0xFF => extended frame (00 00 FF FF FF LENH LENL LCS ...)
+ *           next 0x01 => normal frame with LEN=0xFF, LCS=0x01
  *   else -> normal LEN byte
  */
 enum {
@@ -15,7 +16,8 @@ enum {
     S_START_FF,     /* saw 0x00(s), waiting for 0xFF */
     S_CLASSIFY,     /* first byte after 0xFF */
     S_ACK_FF,       /* ACK: expect 0xFF after the 0x00 */
-    S_EXT_OR_NACK,  /* saw FF FF: 0x00 => NACK's len, else extended LENH */
+    S_EXT_OR_NACK,  /* saw FF after the start code: NACK, extended or LEN=FF */
+    S_EXT_LENH,     /* extended length high */
     S_EXT_LENL,     /* extended length low */
     S_EXT_LCS,      /* extended length checksum */
     S_LCS,          /* normal length checksum */
@@ -27,6 +29,10 @@ enum {
 void pn532_parser_reset(pn532_parser_t *p) {
     memset(p, 0, sizeof(*p));
     p->state = S_PREAMBLE;
+}
+
+bool pn532_parser_idle(const pn532_parser_t *p) {
+    return p->state == S_PREAMBLE;
 }
 
 pn532_rx_result_t pn532_parser_push(pn532_parser_t *p, uint8_t b,
@@ -76,7 +82,22 @@ pn532_rx_result_t pn532_parser_push(pn532_parser_t *p, uint8_t b,
             pn532_parser_reset(p);
             return PN532_RX_NACK;
         }
-        /* extended length high byte */
+        if (b == 0xFF) {           /* second FF of the extended-frame marker */
+            p->state = S_EXT_LENH;
+            return PN532_RX_INCOMPLETE;
+        }
+        if (b == 0x01) {           /* normal frame: LEN=0xFF, LCS=0x01 */
+            p->len = 0xFF;
+            p->extended = false;
+            p->idx = 0;
+            p->sum = 0;
+            p->state = S_PAYLOAD;
+            return PN532_RX_INCOMPLETE;
+        }
+        pn532_parser_reset(p);
+        return PN532_RX_ERROR;
+
+    case S_EXT_LENH:
         p->ext_lenh = b;
         p->state = S_EXT_LENL;
         return PN532_RX_INCOMPLETE;
@@ -147,10 +168,10 @@ size_t pn532_build_ack(uint8_t *out) {
     return sizeof(ack);
 }
 
-size_t pn532_build_nack(uint8_t *out) {
-    static const uint8_t nack[6] = { 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00 };
-    memcpy(out, nack, sizeof(nack));
-    return sizeof(nack);
+size_t pn532_build_error(uint8_t *out) {
+    static const uint8_t err[8] = { 0x00, 0x00, 0xFF, 0x01, 0xFF, 0x7F, 0x81, 0x00 };
+    memcpy(out, err, sizeof(err));
+    return sizeof(err);
 }
 
 size_t pn532_build_response(uint8_t *out, uint8_t cmd,

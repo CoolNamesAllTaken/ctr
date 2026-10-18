@@ -69,3 +69,33 @@ mfrc522_status_t mfc_write(uint8_t block, const uint8_t in16[16]) {
     data[17] = crc[1];
     return expect_ack(data, 18);
 }
+
+mfrc522_status_t mfc_value(uint8_t op, uint8_t block, const uint8_t value[4]) {
+    /* Phase 1: op + block, expect ACK. */
+    uint8_t cmd[4] = { op, block, 0, 0 };
+    mfrc522_status_t st = mfrc522_append_crc(cmd, 2);
+    if (st != MFRC522_OK) return st;
+    st = expect_ack(cmd, 4);
+    if (st != MFRC522_OK) return st;
+
+    /* Phase 2: the 4-byte operand. The card answers success with silence, so a
+     * timeout is the good case; any reply is a NAK. */
+    uint8_t data[6];
+    memcpy(data, value, 4);
+    st = mfrc522_append_crc(data, 4);
+    if (st != MFRC522_OK) return st;
+    uint8_t rx[1];
+    uint8_t rx_len = sizeof(rx);
+    uint8_t rx_bits = 0;
+    st = mfrc522_transceive(data, 6, 0, rx, &rx_len, &rx_bits);
+    if (st == MFRC522_ERR_TIMEOUT) return MFRC522_OK;
+    if (st != MFRC522_OK) return st;
+    return MFRC522_ERR_COMM;
+}
+
+mfrc522_status_t mfc_transfer(uint8_t block) {
+    uint8_t cmd[4] = { MFC_CMD_TRANSFER, block, 0, 0 };
+    mfrc522_status_t st = mfrc522_append_crc(cmd, 2);
+    if (st != MFRC522_OK) return st;
+    return expect_ack(cmd, 4);
+}
