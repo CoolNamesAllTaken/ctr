@@ -2,11 +2,9 @@
 """Continuously read and print the UID of any ISO14443A tag presented to the
 RC522-backed PN532 bridge.
 
-The firmware exposes two USB CDC ports; pass the *second* one (labelled
-"PN532 Emulation") as --port. On macOS it's typically the higher-numbered
-/dev/tty.usbmodemXXXX3.
+The firmware exposes a single USB CDC port; pass it as --port. On macOS it's /dev/tty.usbmodemXXXX1.
 
-    python read_uid.py --port /dev/tty.usbmodemXXXX3
+    python read_uid.py --port /dev/tty.usbmodemXXXX1
 """
 import argparse
 import sys

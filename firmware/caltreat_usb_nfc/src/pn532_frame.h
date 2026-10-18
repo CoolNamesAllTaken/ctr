@@ -1,5 +1,5 @@
 /*
- * PN532 host<->controller framing over a byte stream (TinyUSB CDC1).
+ * PN532 host<->controller framing over a byte stream (TinyUSB CDC).
  *
  * Frame format (UART/HSU variant, used by libnfc's pn532_uart driver and by
  * adafruit-circuitpython-pn532):
@@ -8,6 +8,7 @@
  *   Extended: 00 00 FF FF FF LENH LENL LCS TFI PD0..PDn DCS 00
  *   ACK:      00 00 FF 00 FF 00
  *   NACK:     00 00 FF FF 00 00
+ *   Error:    00 00 FF 01 FF 7F 81 00   (application-level/syntax error)
  *
  * LEN = TFI + data length; LCS = (-(LEN)) & 0xFF;
  * DCS = -(TFI + sum(PD)) & 0xFF. TFI is 0xD4 host->PN532, 0xD5 PN532->host.
@@ -33,7 +34,7 @@ typedef enum {
     PN532_RX_FRAME,          /* a full command payload is ready */
     PN532_RX_ACK,            /* host sent an ACK (ignore) */
     PN532_RX_NACK,           /* host sent a NACK (host wants a resend) */
-    PN532_RX_ERROR,          /* checksum/format error; a NACK should be sent */
+    PN532_RX_ERROR,          /* checksum/format error; frame is dropped */
 } pn532_rx_result_t;
 
 typedef struct {
@@ -49,6 +50,9 @@ typedef struct {
 
 void pn532_parser_reset(pn532_parser_t *p);
 
+/* True when the parser is between frames (not partway through one). */
+bool pn532_parser_idle(const pn532_parser_t *p);
+
 /*
  * Push one received byte. On PN532_RX_FRAME, *out_cmd points at the command
  * byte and the data that follows (TFI already stripped) and *out_len is the
@@ -59,8 +63,8 @@ pn532_rx_result_t pn532_parser_push(pn532_parser_t *p, uint8_t byte,
 
 /* Build an ACK frame into out (6 bytes). Returns the length (6). */
 size_t pn532_build_ack(uint8_t *out);
-/* Build a NACK frame into out (6 bytes). Returns the length (6). */
-size_t pn532_build_nack(uint8_t *out);
+/* Build the PN532 syntax error frame into out (8 bytes). Returns the length. */
+size_t pn532_build_error(uint8_t *out);
 
 /*
  * Build a response frame carrying TFI 0xD5 followed by `cmd` and `data`.
