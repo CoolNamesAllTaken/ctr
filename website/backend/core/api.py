@@ -9,6 +9,7 @@ from ninja.errors import HttpError
 
 from core import fares
 from core.models import (
+    Alert,
     Arrival,
     ChipperCard,
     Kiosk,
@@ -257,3 +258,39 @@ def create_tap(request, payload: TapIn):
             "trip_fare": tap_on.card_charge + tap.card_charge if tap_on else None,
         },
     )
+
+
+class AlertIn(Schema):
+    message: str
+    # Leave out for an alert about the whole line.
+    train_id: int | None = None
+
+
+class AlertOut(Schema):
+    id: int
+    message: str
+    train_id: int | None
+    train_name: str | None = Field(None, alias="train.name")
+    is_active: bool
+    created_at: datetime
+
+
+@router.get("/alerts/", response=list[AlertOut], auth=None)
+def list_alerts(request, limit: int = 20):
+    return Alert.objects.select_related("train").order_by("-created_at")[:limit]
+
+
+@router.post("/alerts/", response={201: AlertOut}, auth=None)
+def create_alert(request, payload: AlertIn):
+    """Issue a service alert for one train, or the whole line."""
+    message = payload.message.strip()
+    if not message:
+        raise HttpError(422, "Alert message is required.")
+
+    train = None
+    if payload.train_id is not None:
+        train = Train.objects.filter(id=payload.train_id).first()
+        if train is None:
+            raise HttpError(422, "That train no longer exists.")
+
+    return Status(201, Alert.objects.create(message=message, train=train))

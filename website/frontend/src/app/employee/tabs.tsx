@@ -7,6 +7,7 @@ const TABS = [
   { href: "/employee", label: "Trains" },
   { href: "/employee/cards", label: "Chipper cards" },
   { href: "/employee/taps", label: "Tap simulator" },
+  { href: "/employee/alerts", label: "Alerts" },
 ] as const;
 
 export function EmployeeTabs() {
