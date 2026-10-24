@@ -2,7 +2,7 @@ DC := docker compose -f compose.dev.yml
 MANAGE := $(DC) exec django python manage.py
 
 .DEFAULT_GOAL := help
-.PHONY: help up down logs backend frontend migrations superuser test format
+.PHONY: help up down logs backend frontend migrations superuser starter-data test format
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_.-]+:.*## / {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -31,6 +31,9 @@ migrations: ## Create migrations from model changes and apply them
 
 superuser: ## Create an admin user
 	$(MANAGE) createsuperuser
+
+starter-data: ## Add the starter train cars, stations and kiosks if missing
+	$(MANAGE) load_starter_data
 
 test: ## Run backend tests: make test [ARGS="-k health"]
 	$(DC) exec django pytest $(ARGS)
