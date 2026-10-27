@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "Custom_Resistor_SMD") (type "KiCad") (uri "${KICAD_LIBS_DIR}/lib_fp/Custom_Resistor_SMD.pretty") (options "") (descr ""))
+)
