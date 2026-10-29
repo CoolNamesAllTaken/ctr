@@ -1,0 +1,4 @@
+# All firmware in this directory follows the Google C++ Style Guide.
+# https://google.github.io/styleguide/cppguide.html
+BasedOnStyle: Google
+Language: Cpp

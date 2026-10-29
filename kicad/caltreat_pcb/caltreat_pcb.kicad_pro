@@ -105,7 +105,7 @@
         "padstack": "warning",
         "pth_inside_courtyard": "error",
         "shorting_items": "error",
-        "silk_edge_clearance": "warning",
+        "silk_edge_clearance": "ignore",
         "silk_over_copper": "warning",
         "silk_overlap": "warning",
         "skew_out_of_range": "error",
@@ -543,7 +543,7 @@
       "gencad": "",
       "idf": "",
       "netlist": "",
-      "plot": "",
+      "plot": "exports/",
       "pos_files": "",
       "specctra_dsn": "",
       "step": "adsbee_m1090_pogo_board.step",
@@ -750,7 +750,7 @@
         "uuid": "d81c9264-8b8f-4ef4-a644-df6224caac0c"
       }
     ],
-    "used_designators": "",
+    "used_designators": "D1-4,D6-8",
     "variants": []
   },
   "sheets": [
