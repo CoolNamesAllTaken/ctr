@@ -12,6 +12,7 @@ from core.models import (
     Station,
     Train,
     TrainCar,
+    TrainStatus,
     User,
 )
 
@@ -20,6 +21,7 @@ admin.site.register(
     [
         TrainCar,
         Train,
+        TrainStatus,
         Station,
         Alert,
         Kiosk,
