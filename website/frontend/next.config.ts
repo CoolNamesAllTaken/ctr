@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 const API_URL = process.env.API_URL ?? "http://localhost:8000";
 
 const nextConfig: NextConfig = {
+  // A self-contained server for the production Docker image.
+  output: "standalone",
   cacheComponents: true,
   partialPrefetching: true,
   // Django URLs end in a slash; don't let Next redirect it away before proxying.

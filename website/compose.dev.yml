@@ -2,7 +2,9 @@ name: ctr-dev
 
 services:
   django:
-    build: ./backend
+    build:
+      context: ./backend
+      target: dev
     restart: unless-stopped
     ports:
       - ${DJANGO_PORT:-8000}:8000
@@ -18,7 +20,9 @@ services:
              python -u manage.py runserver 0.0.0.0:8000"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: dev
     restart: unless-stopped
     ports:
       - ${FRONTEND_PORT:-3000}:3000

@@ -29,6 +29,7 @@ working outside the containers (linting, adding dependencies) you'll also want
    - API docs: http://localhost:8000/api/docs
    - Admin: http://localhost:8000/admin/
    - Employee portal: http://localhost:3000/employee
+   - Chipper Card site: http://chipper.localhost:3000
 
 Migrations are applied automatically when the `django` container starts. If
 port 8000 or 3000 is taken, export `DJANGO_PORT` / `FRONTEND_PORT` in your
@@ -77,11 +78,20 @@ cd backend && uv sync && uv run pre-commit install
 cd frontend && npm install
 ```
 
+## Deploying
+
+Pushes to `main` deploy to Google Cloud once CI passes. See
+[DEPLOY.md](DEPLOY.md) for the one-time setup and how deploys work.
+
 ## How the pieces fit
 
 - The browser only talks to Next.js. `frontend/next.config.ts` proxies
   `/api/*` to Django, so there is no CORS setup and session/CSRF cookies are
   same-origin.
+- The same Next.js app serves two sites. `frontend/src/proxy.ts` rewrites
+  requests for chippercard.com (and `chipper.localhost` in development) into
+  `frontend/src/app/chipper/`, and 404s `/chipper` everywhere else. Everything
+  else is the Caltreat site.
 - Server-side code fetches Django directly with `apiFetch` from
   `frontend/src/lib/api.ts`, using the `API_URL` environment variable.
 - API endpoints are built with [Django Ninja](https://django-ninja.dev/) and
