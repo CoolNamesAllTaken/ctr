@@ -67,3 +67,63 @@ export type Alert = {
   is_active: boolean;
   created_at: string;
 };
+
+// Times are ISO datetimes for today's run of the train.
+export type StopDelay = {
+  station_id: number;
+  station_name: string;
+  scheduled_at: string;
+  expected_at: string;
+  delay_minutes: number;
+  alert_id: number | null;
+  alert_message: string | null;
+};
+
+export type TrainRun = {
+  train_id: number;
+  train_name: string;
+  direction: Direction;
+  stops: StopDelay[];
+};
+
+export type Timetable = {
+  date: string;
+  stations: Station[];
+  trains: TrainRun[];
+  // Active ones only.
+  alerts: Alert[];
+};
+
+// A train on the live map: between two stations, or at one (when both are
+// that station and at_station_id is set).
+export type LiveTrain = {
+  train_id: number;
+  train_name: string;
+  direction: Direction;
+  from_station_id: number;
+  to_station_id: number;
+  // 0 at from_station, 1 at to_station.
+  progress: number;
+  at_station_id: number | null;
+  delay_minutes: number;
+  // Including the one it's at.
+  upcoming_stops: StopDelay[];
+};
+
+export type LiveMap = {
+  as_of: string;
+  stations: Station[];
+  trains: LiveTrain[];
+};
+
+export type TrainState = "stopped" | "moving" | "out_of_service";
+
+// Today's run of a train with what the conductor last marked it. The status
+// fields are all null while it's following the timetable.
+export type TrainStatus = TrainRun & {
+  state: TrainState | null;
+  // Where it's stopped, or the stop it last left.
+  station_id: number | null;
+  station_name: string | null;
+  updated_at: string | null;
+};
