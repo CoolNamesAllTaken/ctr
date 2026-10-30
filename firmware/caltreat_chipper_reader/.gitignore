@@ -1,0 +1,9 @@
+.pio
+.vscode/
+
+# ESP-IDF generated
+/sdkconfig.*
+!/sdkconfig.defaults
+managed_components/
+build/
+
