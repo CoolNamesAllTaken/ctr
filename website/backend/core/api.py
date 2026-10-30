@@ -1,13 +1,14 @@
 import re
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from ninja import Field, Router, Schema, Status
 from ninja.errors import HttpError
 
-from core import fares
+from core import delays, fares, live_map, train_status
 from core.models import (
     Alert,
     Arrival,
@@ -18,6 +19,7 @@ from core.models import (
     Station,
     Train,
     TrainCar,
+    TrainStatus,
 )
 from core.starter_data import load_starter_data
 
@@ -276,8 +278,11 @@ class AlertOut(Schema):
 
 
 @router.get("/alerts/", response=list[AlertOut], auth=None)
-def list_alerts(request, limit: int = 20):
-    return Alert.objects.select_related("train").order_by("-created_at")[:limit]
+def list_alerts(request, limit: int = 20, active: bool | None = None):
+    alerts = Alert.objects.select_related("train").order_by("-created_at")
+    if active is not None:
+        alerts = alerts.filter(is_active=active)
+    return alerts[:limit]
 
 
 @router.post("/alerts/", response={201: AlertOut}, auth=None)
@@ -294,3 +299,174 @@ def create_alert(request, payload: AlertIn):
             raise HttpError(422, "That train no longer exists.")
 
     return Status(201, Alert.objects.create(message=message, train=train))
+
+
+class StopDelayOut(Schema):
+    station_id: int
+    station_name: str
+    scheduled_at: datetime
+    expected_at: datetime
+    delay_minutes: int
+    alert_id: int | None
+    alert_message: str | None
+
+
+class TrainRunOut(Schema):
+    train_id: int
+    train_name: str
+    direction: Train.Direction
+    stops: list[StopDelayOut]
+
+
+class DelayIn(Schema):
+    train_id: int
+    # Zero clears the delay.
+    delay_minutes: int = Field(ge=0, le=24 * 60)
+    # Where the delay starts; leave out to delay the whole run.
+    from_station_id: int | None = None
+    # The alert explaining the delay, if any.
+    alert_id: int | None = None
+
+
+@router.get("/delays/", response=list[TrainRunOut], auth=None)
+def list_delays(request):
+    """Today's run of every train, with live delays."""
+    return delays.train_runs(timezone.localdate())
+
+
+@router.post("/delays/", response=TrainRunOut, auth=None)
+def set_delay(request, payload: DelayIn):
+    """Set the delay on today's run of a train, from a stop onwards."""
+    train = Train.objects.filter(id=payload.train_id).first()
+    if train is None:
+        raise HttpError(422, "That train no longer exists.")
+    alert = None
+    if payload.alert_id is not None:
+        alert = Alert.objects.filter(id=payload.alert_id).first()
+        if alert is None:
+            raise HttpError(422, "That alert no longer exists.")
+
+    today = timezone.localdate()
+    try:
+        delays.set_delay(
+            train,
+            today,
+            payload.delay_minutes,
+            from_station_id=payload.from_station_id,
+            alert=alert,
+        )
+    except delays.DelayError as error:
+        raise HttpError(422, str(error)) from error
+    [run] = delays.train_runs(today, Train.objects.filter(id=train.id))
+    return run
+
+
+class TrainStatusIn(Schema):
+    train_id: int
+    state: TrainStatus.State
+    # Where it's stopped, or the stop it's just left. Not needed when out of
+    # service.
+    station_id: int | None = None
+
+
+class TrainStatusOut(TrainRunOut):
+    # All null while the train is following the timetable.
+    state: TrainStatus.State | None
+    station_id: int | None
+    station_name: str | None
+    updated_at: datetime | None
+
+
+def get_train(train_id):
+    train = Train.objects.filter(id=train_id).first()
+    if train is None:
+        raise HttpError(422, "That train no longer exists.")
+    return train
+
+
+@router.get("/train-statuses/", response=list[TrainStatusOut], auth=None)
+def list_train_statuses(request):
+    """Today's run of every train, with what the conductor last marked it."""
+    return train_status.todays_statuses(timezone.now())
+
+
+@router.post("/train-statuses/", response=TrainStatusOut, auth=None)
+def set_train_status(request, payload: TrainStatusIn):
+    """Mark today's run of a train stopped, moving or out of service. The live
+    map follows this instead of the timetable."""
+    train = get_train(payload.train_id)
+    now = timezone.now()
+    try:
+        train_status.set_status(train, payload.state, now, payload.station_id)
+    except train_status.StatusError as error:
+        raise HttpError(422, str(error)) from error
+    [run] = train_status.todays_statuses(now, Train.objects.filter(id=train.id))
+    return run
+
+
+@router.delete("/train-statuses/{train_id}/", response=TrainStatusOut, auth=None)
+def clear_train_status(request, train_id: int):
+    """Put today's run of a train back on the timetable on the live map."""
+    train = get_train(train_id)
+    now = timezone.now()
+    train_status.clear_status(train, now)
+    [run] = train_status.todays_statuses(now, Train.objects.filter(id=train.id))
+    return run
+
+
+# Rider-facing, so public on purpose, unlike the employee endpoints above.
+
+
+class TimetableOut(Schema):
+    date: date
+    stations: list[StationOut]
+    trains: list[TrainRunOut]
+    alerts: list[AlertOut]
+
+
+@router.get("/timetable/", response=TimetableOut, auth=None)
+def timetable(request):
+    """Today's timetable with live delays, and the active service alerts."""
+    today = timezone.localdate()
+    return {
+        "date": today,
+        "stations": Station.objects.all(),
+        "trains": delays.train_runs(today),
+        "alerts": Alert.objects.filter(is_active=True)
+        .select_related("train")
+        .order_by("-created_at"),
+    }
+
+
+class LiveTrainOut(Schema):
+    train_id: int
+    train_name: str
+    direction: Train.Direction
+    # Between from_station and to_station, progress of the way along. At a
+    # station, both are that station and at_station_id is set.
+    from_station_id: int
+    to_station_id: int
+    progress: float
+    at_station_id: int | None
+    delay_minutes: int
+    upcoming_stops: list[StopDelayOut]
+
+
+class LiveMapOut(Schema):
+    as_of: datetime
+    stations: list[StationOut]
+    trains: list[LiveTrainOut]
+
+
+@router.get("/live-map/", response=LiveMapOut, auth=None)
+def live_map_view(request, at: datetime | None = None):
+    """Where each train is right now, for the live map to poll. Pass `at` to
+    see the map at another time today, e.g. for a demo."""
+    now = at or timezone.now()
+    if timezone.is_naive(now):
+        now = timezone.make_aware(now)
+    return {
+        "as_of": now,
+        "stations": Station.objects.all(),
+        "trains": live_map.train_locations(now),
+    }

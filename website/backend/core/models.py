@@ -93,8 +93,50 @@ class ArrivalInstance(models.Model):
         related_name="arrival_instances",
     )
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["arrival", "scheduled_at"],
+                name="unique_arrival_instance_per_time",
+            )
+        ]
+
     def __str__(self):
         return f"{self.arrival} on {self.scheduled_at:%Y-%m-%d}"
+
+
+class TrainStatus(models.Model):
+    """The conductor's word on where one day's run of a train is. Overrides
+    the timetable on the live map; with none, the map follows the timetable."""
+
+    class State(models.TextChoices):
+        STOPPED = "stopped", "Stopped at a station"
+        MOVING = "moving", "Moving to the next stop"
+        OUT_OF_SERVICE = "out_of_service", "Out of service"
+
+    train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name="statuses")
+    date = models.DateField()
+    state = models.CharField(max_length=20, choices=State.choices)
+    # Where it's stopped, or the stop it last left. Unset when out of service.
+    station = models.ForeignKey(
+        Station,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        verbose_name_plural = "train statuses"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["train", "date"], name="unique_train_status_per_day"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.train} on {self.date}: {self.get_state_display()}"
 
 
 class ChipperCard(models.Model):
