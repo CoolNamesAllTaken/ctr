@@ -9,13 +9,15 @@ const TABS = [
   { href: "/employee/cards", label: "Chipper cards" },
   { href: "/employee/taps", label: "Tap simulator" },
   { href: "/employee/alerts", label: "Alerts" },
+  { href: "/employee/delays", label: "Live delays" },
+  { href: "/employee/status", label: "Train status" },
 ] as const;
 
 export function EmployeeTabs() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex gap-1 border-b border-zinc-200 dark:border-zinc-800">
+    <nav className="flex flex-wrap gap-1 border-b border-zinc-200 dark:border-zinc-800">
       {TABS.map(({ href, label }) => {
         const active = pathname === href;
         return (
