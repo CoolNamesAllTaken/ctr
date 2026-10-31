@@ -225,8 +225,6 @@ body { font: 15px/1.45 var(--body) !important; }
 .boardhd small { overflow-wrap: anywhere; }
 .boardhd b { font: 700 18px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; }
 .boardhd small { font: 500 11px/1.2 var(--mono); color: var(--muted); }
-.boardhd .txt { flex: 0 1 8em; width: 8em; }  /* names are <= 12 chars; the default input width pushed All off a phone screen */
-.boardhd small { min-width: 0; overflow-wrap: anywhere; }
 .offline .srow { opacity: .5; }
 .txt { font: 500 15px var(--body); background: var(--bezel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 8px; height: 40px; min-width: 0; flex: 1 1 120px; }
 .errs { color: #ff8a80; font-size: 13px; }
