@@ -28,7 +28,7 @@ CHANNELS = ("both", "left", "right")
 MIX_KEYS = ("master", "horn", "bell", "motor", "doors", "air", "brakes")  # the old numpy engine (fallback)
 # the v12 engine (pi/engine): its page's Mix sliders, %, and defaults (caltrain-sounds app/index.src.html)
 MIX12 = {"master": 85, "horn": 85, "breath": 50, "bell": 75, "motor": 80, "door": 70, "doorMech": 70, "doorLeak": 70,
-         "sand": 70, "hiss": 70, "interior": 0}
+         "hiss": 70, "sand": 70, "interior": 0}
 LAYER_KEYS = ("hvac", "traction", "rolling", "rumble", "clatter", "whine")
 LAYER_MODES = ("auto", "on", "off")
 LAYER_MAX = {"hvac": 200, "traction": 200, "rolling": 200, "rumble": 200, "clatter": 300, "whine": 100}

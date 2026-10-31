@@ -21,7 +21,7 @@ const path = require('path');
 const BUSES = ['front', 'inside', 'rear'];
 const BLOCK = +(process.env.CALTREAT_ENGINE_BLOCK || 512);
 const SR = +(process.env.CALTREAT_ENGINE_RATE || 48000);
-const DEPTH = +(process.env.CALTREAT_ENGINE_DEPTH || 1); // blocks rendered ahead per bus
+const DEPTH = +(process.env.CALTREAT_ENGINE_DEPTH || 2); // blocks rendered ahead per bus (2: a slow block (GC) doesn't drop out)
 const SLOTS = 4;
 const WARMUP = process.env.CALTREAT_ENGINE_WARMUP !== '0';
 

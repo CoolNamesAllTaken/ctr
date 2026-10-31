@@ -102,8 +102,8 @@ class Sidecar:
         p = subprocess.Popen([self.node, str(ENGINE_DIR / "sidecar.js")], stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, pass_fds=(w,), env=env, bufsize=0, cwd=str(ENGINE_DIR))
         os.close(w)
-        try:  # keep little audio in flight: about one block of the three buses
-            fcntl.fcntl(p.stdout.fileno(), fcntl.F_SETPIPE_SZ, 8192)
+        try:  # keep little audio in flight: under one block of the three buses
+            fcntl.fcntl(p.stdout.fileno(), fcntl.F_SETPIPE_SZ, 4096)
         except OSError:
             pass
         return p, os.fdopen(r, "r")

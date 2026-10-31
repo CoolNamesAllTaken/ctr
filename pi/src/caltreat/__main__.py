@@ -2695,7 +2695,7 @@ def engineer_html():
   <section class="main">
     <button class="pad bell" id="bell" aria-pressed="false" title="Bell (B): tap on / off, 2.5 strikes/s" aria-label="Bell">
       <svg class="pi" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 6c-6 0-9 5-9 11v7l-3 5h24l-3-5v-7c0-6-3-11-9-11zM16 32a4 4 0 0 0 8 0"/></svg><b>Bell</b></button>
-    <button class="pad door" id="door" aria-pressed="false" aria-label="Doors" title="Doors (D): tap to open, tap again to close (warning tone 3 s, or as long as you hold), leaves slide, closed and locked. A tap while they move reverses them.">
+    <button class="pad door" id="door" aria-pressed="false" aria-label="Doors" title="Doors (D): tap to open (release signal, unlock, slide), tap again to close (warning signal, slide, seal, lock). A tap while they move reverses them.">
       <svg class="dicon" viewBox="0 0 56 44" aria-hidden="true"><rect class="f" x="2" y="2" width="52" height="40" rx="3"/><rect class="l" id="leafL" x="5" y="5" width="22.5" height="34" rx="1.5"/><rect class="l" id="leafR" x="28.5" y="5" width="22.5" height="34" rx="1.5"/></svg><b>Doors</b></button>
     <button class="hornbtn" id="horn" aria-label="Horn (hold)" title="Horn (Space / H): hold to sound"><b>HORN</b><span>hold</span></button>
   </section>
@@ -3121,8 +3121,9 @@ async def settings(client):
 
             # --- speakers ---
             with el("section", "ctl set"):
-                el("h2", "", "Speakers", "Which sound card and channel each speaker is on. The train sound plays on "
-                                         "all of them; the intercom on Inside. ▶ = 440 Hz test tone")
+                el("h2", "", "Speakers", "Which sound card and channel each speaker is on. Each plays its own v12 "
+                                         "mix (outside front, inside, outside rear); the intercom plays on Inside. "
+                                         "▶ = 440 Hz test tone")
                 with el("div", "rows"):
                     for sp in SPEAKERS:
                         s = d["speakers"][sp]
