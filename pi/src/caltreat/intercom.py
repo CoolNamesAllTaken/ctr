@@ -25,6 +25,8 @@ PREBUF_STEP = 10
 PREBUF_MAX = 60
 MAX_MS = 200
 TARGET_MS = 80  # what an overfull buffer is cut back to
+SETTLE = 1.0  # s after the talk starts before MAX_MS applies (the start-up burst plays in full)
+BURST_MAX_MS = 3000  # the most kept at the start
 STALE = 1.5  # s without frames = the talker is gone
 
 
@@ -141,7 +143,10 @@ class Intercom:
                 self.pending.append((self.fed, t_ms, len(pcm), time.time() * 1000))
             self.fed += len(pcm)
             self.buf = np.concatenate([self.buf, pcm])
-            if len(self.buf) > MAX_MS * IN_RATE // 1000:
+            # the frames the page queued while the talk was starting arrive at once: keep them (they are the first
+            # words); only once the talk is SETTLE s old is a buffer over MAX_MS cut back (a stalled network)
+            limit = MAX_MS if self.last_frame - self.started > SETTLE else BURST_MAX_MS
+            if len(self.buf) > limit * IN_RATE // 1000:
                 cut = len(self.buf) - TARGET_MS * IN_RATE // 1000
                 self.buf = self.buf[cut:]
                 self.consumed += cut

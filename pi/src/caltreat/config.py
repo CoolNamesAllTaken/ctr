@@ -254,6 +254,9 @@ class Config:
         self.lock = threading.RLock()
         self.error = None
         self.listeners = []
+        self._timer = None  # a pending changed() write
+        self._wlock = threading.Lock()  # one disk write at a time
+        self._seq = self._written = 0  # snapshot numbers: never let an older snapshot overwrite a newer one
 
     @property
     def path(self):
@@ -303,8 +306,41 @@ class Config:
         self.save()
 
     def save(self):
+        """Write the file now (atomically), then tell the listeners. Blocks on the disk: not on the asyncio loop."""
+        self.flush()
+        self._write()
+        for fn in self.listeners:
+            fn()
+
+    def changed(self, delay=0.5):
+        """For the pages (the asyncio loop): apply a change now (listeners), write the file `delay` s later from a
+        background thread, so a dragged slider writes once and the loop never waits for the disk."""
+        for fn in self.listeners:
+            fn()
         with self.lock:
-            text = json.dumps(self.data, indent=2, ensure_ascii=False) + "\n"
+            if self._timer:
+                self._timer.cancel()
+            self._timer = threading.Timer(delay, self._write)
+            self._timer.daemon = True
+            self._timer.start()
+
+    def flush(self):
+        """Write a pending changed() now (at shutdown)."""
+        with self.lock:
+            pending = self._timer is not None
+            if self._timer:
+                self._timer.cancel()
+        if pending:
+            self._write()
+
+    def _write(self):
+        with self.lock:  # only for the snapshot: the disk write must not hold up the loop (changed() takes it)
+            self._timer = None
+            self._seq += 1
+            seq, text = self._seq, json.dumps(self.data, indent=2, ensure_ascii=False) + "\n"
+        with self._wlock:
+            if seq < self._written:  # a newer snapshot is already on disk
+                return
             try:
                 self.folder.mkdir(parents=True, exist_ok=True)
                 fd, tmp = tempfile.mkstemp(prefix=".config-", suffix=".json", dir=self.folder)
@@ -313,22 +349,22 @@ class Config:
                     f.flush()
                     os.fsync(f.fileno())
                 os.replace(tmp, self.path)
+                self._written = seq
                 self.error = None
             except OSError as e:
                 self.error = f"could not save {self.path}: {e}"
-        for fn in self.listeners:
-            fn()
 
-    def replace(self, data):
+    def replace(self, data, soon=False):
         with self.lock:
             self.data = complete(data)
-        self.save()
+        self.changed(0) if soon else self.save()
 
-    def reset(self):
+    def reset(self, soon=False):
         """Defaults, but the boards keep their names (so they don't swap letters)."""
         d = defaults()
-        d["boards"] = {uid: board_defaults(b["name"]) for uid, b in self.data["boards"].items()}
-        self.replace(d)
+        with self.lock:
+            d["boards"] = {uid: board_defaults(b["name"]) for uid, b in self.data["boards"].items()}
+        self.replace(d, soon)
 
     def export(self):
         with self.lock:
