@@ -1,12 +1,15 @@
 import re
+import secrets
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 from ninja import Field, Router, Schema, Status
 from ninja.errors import HttpError
+from ninja.security import APIKeyHeader
 
 from core import delays, fares, live_map, train_status
 from core.models import (
@@ -23,7 +26,26 @@ from core.models import (
 )
 from core.starter_data import load_starter_data
 
-router = Router()
+
+class EmployeePassphrase(APIKeyHeader):
+    """The employee portal's shared passphrase, which the Next.js server sends
+    on every request once an employee has logged in to the portal with it."""
+
+    param_name = "X-Employee-Passphrase"
+
+    def authenticate(self, request, key):
+        passphrase = settings.EMPLOYEE_PASSPHRASE
+        if (
+            passphrase
+            and key
+            and secrets.compare_digest(key.encode(), passphrase.encode())
+        ):
+            return True
+        return None
+
+
+# Employee-only unless an endpoint says otherwise with auth=None.
+router = Router(auth=EmployeePassphrase())
 
 
 class HealthOut(Schema):
@@ -82,26 +104,22 @@ class TrainOut(Schema):
         return obj.arrivals.select_related("station").order_by("time")
 
 
-# TODO: the employee endpoints below are open (auth=None) until employee login
-# exists. Put them back behind auth before this goes anywhere public.
-
-
-@router.get("/traincars/", response=list[TrainCarOut], auth=None)
+@router.get("/traincars/", response=list[TrainCarOut])
 def list_traincars(request):
     return TrainCar.objects.order_by("number")
 
 
-@router.get("/stations/", response=list[StationOut], auth=None)
+@router.get("/stations/", response=list[StationOut])
 def list_stations(request):
     return Station.objects.all()
 
 
-@router.get("/trains/", response=list[TrainOut], auth=None)
+@router.get("/trains/", response=list[TrainOut])
 def list_trains(request):
     return Train.objects.order_by("name")
 
 
-@router.post("/trains/", response={201: TrainOut}, auth=None)
+@router.post("/trains/", response={201: TrainOut})
 def create_train(request, payload: TrainIn):
     name = payload.name.strip()
     if not name:
@@ -137,7 +155,7 @@ class StarterDataOut(Schema):
     kiosks: int
 
 
-@router.post("/starter-data/", response=StarterDataOut, auth=None)
+@router.post("/starter-data/", response=StarterDataOut)
 def create_starter_data(request):
     """Add the starter train cars, stations and kiosks that are missing."""
     try:
@@ -173,12 +191,12 @@ def normalize_uid(uid):
     return uid
 
 
-@router.get("/riders/", response=list[RiderOut], auth=None)
+@router.get("/riders/", response=list[RiderOut])
 def list_riders(request):
     return Rider.objects.select_related("card").order_by("name")
 
 
-@router.post("/riders/", response={201: RiderOut}, auth=None)
+@router.post("/riders/", response={201: RiderOut})
 def create_rider(request, payload: RiderIn):
     """Set up a new rider with a new Chipper card."""
     name = payload.name.strip()
@@ -203,7 +221,7 @@ class KioskOut(Schema):
     station_name: str = Field(alias="station.name")
 
 
-@router.get("/kiosks/", response=list[KioskOut], auth=None)
+@router.get("/kiosks/", response=list[KioskOut])
 def list_kiosks(request):
     return Kiosk.objects.select_related("station").order_by("station__position", "name")
 
@@ -242,14 +260,14 @@ class TapResultOut(Schema):
     trip_fare: Decimal | None
 
 
-@router.get("/taps/", response=list[TapOut], auth=None)
+@router.get("/taps/", response=list[TapOut])
 def list_taps(request, limit: int = 20):
     return KioskTap.objects.select_related("card__rider", "kiosk__station").order_by(
         "-tap_time"
     )[:limit]
 
 
-@router.post("/taps/", response={201: TapResultOut}, auth=None)
+@router.post("/taps/", response={201: TapResultOut})
 def create_tap(request, payload: TapIn):
     """Simulate a card tap at a kiosk, charging or refunding the fare."""
     try:
@@ -281,7 +299,7 @@ class AlertOut(Schema):
     created_at: datetime
 
 
-@router.get("/alerts/", response=list[AlertOut], auth=None)
+@router.get("/alerts/", response=list[AlertOut])
 def list_alerts(request, limit: int = 20, active: bool | None = None):
     alerts = Alert.objects.select_related("train").order_by("-created_at")
     if active is not None:
@@ -289,7 +307,7 @@ def list_alerts(request, limit: int = 20, active: bool | None = None):
     return alerts[:limit]
 
 
-@router.post("/alerts/", response={201: AlertOut}, auth=None)
+@router.post("/alerts/", response={201: AlertOut})
 def create_alert(request, payload: AlertIn):
     """Issue a service alert for one train, or the whole line."""
     message = payload.message.strip()
@@ -332,13 +350,13 @@ class DelayIn(Schema):
     alert_id: int | None = None
 
 
-@router.get("/delays/", response=list[TrainRunOut], auth=None)
+@router.get("/delays/", response=list[TrainRunOut])
 def list_delays(request):
     """Today's run of every train, with live delays."""
     return delays.train_runs(timezone.localdate())
 
 
-@router.post("/delays/", response=TrainRunOut, auth=None)
+@router.post("/delays/", response=TrainRunOut)
 def set_delay(request, payload: DelayIn):
     """Set the delay on today's run of a train, from a stop onwards."""
     train = Train.objects.filter(id=payload.train_id).first()
@@ -388,13 +406,13 @@ def get_train(train_id):
     return train
 
 
-@router.get("/train-statuses/", response=list[TrainStatusOut], auth=None)
+@router.get("/train-statuses/", response=list[TrainStatusOut])
 def list_train_statuses(request):
     """Today's run of every train, with what the conductor last marked it."""
     return train_status.todays_statuses(timezone.now())
 
 
-@router.post("/train-statuses/", response=TrainStatusOut, auth=None)
+@router.post("/train-statuses/", response=TrainStatusOut)
 def set_train_status(request, payload: TrainStatusIn):
     """Mark today's run of a train stopped, moving or out of service. The live
     map follows this instead of the timetable."""
@@ -408,7 +426,7 @@ def set_train_status(request, payload: TrainStatusIn):
     return run
 
 
-@router.delete("/train-statuses/{train_id}/", response=TrainStatusOut, auth=None)
+@router.delete("/train-statuses/{train_id}/", response=TrainStatusOut)
 def clear_train_status(request, train_id: int):
     """Put today's run of a train back on the timetable on the live map."""
     train = get_train(train_id)

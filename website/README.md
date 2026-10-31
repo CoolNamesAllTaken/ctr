@@ -28,7 +28,8 @@ working outside the containers (linting, adding dependencies) you'll also want
    - API: http://localhost:8000/api/health/
    - API docs: http://localhost:8000/api/docs
    - Admin: http://localhost:8000/admin/
-   - Employee portal: http://localhost:3000/employee
+   - Employee portal: http://localhost:3000/employee (the passphrase is
+     `EMPLOYEE_PASSPHRASE` in `.env.dev`)
    - Chipper Card site: http://chipper.localhost:3000
 
 Migrations are applied automatically when the `django` container starts. If

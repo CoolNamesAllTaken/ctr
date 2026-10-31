@@ -2,15 +2,16 @@
 
 import { refresh } from "next/cache";
 import { ApiError, apiFetch } from "@/lib/api";
+import { requireEmployee } from "@/lib/employee";
 import { type ActionState, errorState } from "../action-state";
 import type { TapResult } from "../types";
 import { formatMoney } from "../ui";
 
-// TODO: check the employee's session here once employee login exists.
 export async function simulateTap(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  await requireEmployee();
   try {
     const { tap, from_station, trip_fare } = await apiFetch<TapResult>(
       "/api/taps/",
