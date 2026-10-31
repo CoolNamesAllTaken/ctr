@@ -1,26 +1,55 @@
 # Caltreat Pi app
 
 The web app that runs the train's lights and sounds. It runs on the Raspberry
-Pi on the train and serves a control page at **http://caltreat.local:8080/**.
-Open it from any phone or laptop on the same network.
+Pi on the train and serves two pages:
 
-The page:
+- **http://caltreat.local:8080/**: the **engineer page**. Big buttons only:
+  the cab display, Depart / Arrive / Crossing, HORN (hold), BELL, DOORS,
+  TALK (hold, the intercom), power with AIR and STOP, the horn signals and the
+  lights. Hover (or long-press) any control for what it does.
+- **http://caltreat.local:8080/settings** (the ⚙ on the engineer page): the
+  sound mix, which sound card and channel each speaker is on, the intercom
+  levels, what every light output does, and a backup of all of it.
 
-- **Plays Caltrain KISS EMU cab sounds** through the Pi's 3.5 mm jack: horn,
-  bell, door chime, traction motor whine, air hiss and brake squeal, plus horn
-  patterns. All browsers share one speaker, so they also share one set of
-  controls. You can test the USB sound cards from the page too.
-- **Switches the relay shield lights**: white head/ditch lights and red
-  markers. Each pair can be off, on or flashing, and the ditch lights can flash
-  with the horn.
-- **Switches GP0–GP7 on the lighting controller boards**
-  ([`firmware/caltreat_lighting_controller`](../firmware/caltreat_lighting_controller)).
-  The app finds the boards on the Pi's wired network over Modbus TCP.
+Open them from any phone or laptop on the same network. Every browser
+controls the same train, so they all show the same state.
 
-Everything is in one file, [`src/caltreat/__main__.py`](src/caltreat/__main__.py),
-built with [NiceGUI](https://nicegui.io/) and numpy. The sound engine is a port
-of the browser version in [`publish.html`](publish.html). The first ~1000 lines
-of `__main__.py` are an older version kept as comments.
+For the intercom (TALK) the phone needs the **https** address,
+**https://caltreat.local:8443/**: see [Intercom and HTTPS](#intercom-and-https).
+
+What it does:
+
+- **Plays Caltrain KISS EMU cab sounds**: horn, bell, door chime, traction
+  motor whine, air hiss and brake squeal, plus horn patterns. The sounds go to
+  up to three speakers, FRONT, INSIDE and REAR, each one the 3.5 mm jack or a
+  channel of a USB sound card (all three play the same sound; INSIDE is also
+  the intercom's).
+- **Sequences**: Depart, Arrive and Grade crossing play the bell, horn, doors,
+  power and brakes in the order US rules ask for (GCOR 5.8.1 / 5.8.2, 49 CFR
+  222.21), in "Show" (short, for the costume) or "Real" timing. Auto run (↻)
+  repeats Depart, two crossings and Arrive. Pressing a control yourself during
+  a sequence takes that control back; ✕ stops the sequence.
+- **Intercom**: hold TALK and speak into the phone; it plays on the INSIDE
+  speakers, and the train sounds there get quieter while you talk.
+- **Lights**: the relay shield (white head/ditch lights and red markers by
+  default) and GP0–GP7 on the lighting controller boards
+  ([`firmware/caltreat_lighting_controller`](../firmware/caltreat_lighting_controller)),
+  found on the Pi's wired network over Modbus TCP. Each output is mapped to a
+  *light function* in the settings (headlights, markers, interior, door
+  lights, crossing flash, horn, bell, or your own), so you can rewire without
+  changing code.
+
+The code is in [`src/caltreat/`](src/caltreat/), built with
+[NiceGUI](https://nicegui.io/) and numpy:
+
+| File | What |
+| --- | --- |
+| `__main__.py` | the sound engine (a port of [`publish.html`](publish.html)), speakers, lights, boards and both pages. The first ~1000 lines are an older version kept as comments. |
+| `sequencer.py` | Depart / Arrive / Crossing / Auto run and the horn signals (a port of the v12 browser app's `sequencer.js`). |
+| `intercom.py` | push-to-talk: one talker at a time, jitter buffer, resampling. |
+| `config.py` | the settings file. |
+| `hw.py`, `fakesink.py` | sound cards (`aplay`, `amixer`), and the stand-in used without them. |
+| `static/` | the page's look (`cab.css`), its script (`cab.js`), the microphone capture (`mic-worklet.js`) and the fonts (Barlow, IBM Plex Mono; SIL Open Font License), served by the Pi so the page looks right without internet. |
 
 ## Deploying to the train
 
@@ -40,7 +69,8 @@ The script:
 3. Runs `poetry sync` if `pyproject.toml` or `poetry.lock` changed. If they
    didn't, it skips this step, so deploys work while the train has no internet.
 4. Installs [`caltreat.service`](caltreat.service) and restarts the app.
-5. Waits until the page responds, or prints the app's logs if it doesn't.
+5. Waits until the page responds (http and https), or prints the app's logs if
+   it doesn't.
 
 Your computer has to be on the same network as the Pi. The script asks for
 the Pi's password once per deploy. To skip the password, copy your SSH key to
@@ -79,18 +109,131 @@ cd ~/caltreat
 poetry run python -m caltreat
 ```
 
+## Intercom and HTTPS
+
+Phones only let a web page use the microphone on a secure (https) page, so
+the app also serves **https://caltreat.local:8443/** (the plain
+http://caltreat.local:8080/ keeps working for everything else; its TALK
+button shows "https ↗" and opens the https page).
+
+The train has no internet and no real domain, so the app makes its own
+**self-signed certificate** the first time it starts (in
+`~/.config/caltreat/https-cert.pem` and `https-key.pem` on the Pi, never in
+the repo; it is renewed 30 days before it expires, after about 2 years). The
+trade-off: every phone has to accept it once, and the browser keeps showing
+"Not secure" in the address bar. The connection is still encrypted. The
+alternative (a real certificate) needs a domain name and internet to renew it.
+
+Accept it once per phone:
+
+- **iPhone (Safari)**: open https://caltreat.local:8443/ → "This Connection
+  Is Not Private" → **Show Details** → **visit this website** → **Visit
+  Website**. Then hold TALK and allow the microphone. If Safari forgets it
+  later, do the same again.
+- **Android (Chrome)**: open https://caltreat.local:8443/ → "Your connection
+  is not private" → **Advanced** → **Proceed to caltreat.local (unsafe)**.
+  Then hold TALK and allow the microphone. If `caltreat.local` doesn't open,
+  use the Pi's address, e.g. https://10.26.81.200:8443/.
+
+Using it: hold TALK, speak, let go. One person talks at a time (the button
+shows busy on the other phones). It stops by itself when you let go, switch
+away from the page, lose the connection, or after the "Max talk" time
+(60 s by default). The bar on the button is your microphone level.
+
+If it squeals (the phone hears the inside speakers), lower **Mic gain** or
+**Output** under Settings → Intercom, or stand further from the speakers.
+**Duck train** sets how much quieter the train sounds on the inside speakers
+get while someone talks.
+
+Delay from the phone's microphone to the speaker is about 140 ms measured
+without Wi-Fi (10 ms frames, a jitter buffer that starts at 20 ms and grows
+only if the network stutters, 40 ms of sound card buffer). If the log shows
+sound card underruns on the Pi, give the cards more buffer: set
+`Environment=CALTREAT_ALSA_BUFFER_MS=60` in `caltreat.service`.
+
+## Settings, backup and restore
+
+All settings are in one file on the Pi, `~/.config/caltreat/config.json`
+(not in the repo; deploys leave it alone). The settings page saves every
+change at once. On the settings page:
+
+- **⤓** downloads it as `caltreat-config.json` (keep one as a backup);
+- **⤒** restores a downloaded file: it is checked first, and you see the list
+  of what would change before you apply it;
+- **⟲** resets everything to the defaults (board names are kept).
+
+The old `boards.json` (board names) is read into it on the first start.
+
+### Speakers
+
+FRONT, INSIDE and REAR each pick a sound card and a channel (L, R or both)
+and a level. "USB #1" means the first USB sound card by USB port, "USB port
+1.3" one exact socket (port paths stay the same across reboots; ALSA's card
+names like `Device_1` don't). The row shows ✓ and the ALSA card when it is
+plugged in, ✗ when it isn't. ▶ plays a 440 Hz test tone on that speaker;
+**Channel test** plays it on one channel of any card. **Card volume** is
+each card's own mixer volume. Defaults: FRONT = the jack, INSIDE = USB #1
+(both channels), REAR = none.
+
+All speakers play the same train sound for now: the engine makes one mix.
+Separate outside/inside mixes (as the browser app's v11 has) would be a
+change to the sound engine.
+
+### Lights
+
+Every output, the relay shield's R1–R4 and each board's GP0–GP7, is mapped to
+a light function, or to "by hand". The phase (A/B) makes two outputs of one
+function alternate when it flashes (ditch lights, crossing flashers).
+Functions:
+
+| Function | Switched by |
+| --- | --- |
+| Headlights, Markers, Interior, your own (＋) | the engineer page: off / on / flash. Headlights also flash with the horn and 5 s after (Settings: Horn ☀). |
+| Door lights | the doors: on while open, flashing while they move. |
+| Crossing flash | flashing during a Crossing sequence or crossing signal. |
+| Horn lamp, Bell lamp | on while the horn sounds / the bell rings. |
+
+Each output row shows its live state; the ◐ button switches a "by hand"
+output, or forces a mapped one on as a test (tap again to release). Boards are
+known by their chip ID (the MAC is shown too) and named A, B, … in the order
+they are first seen; you can rename them. Default mapping: R1/R2 headlights
+A/B, R3/R4 markers A/B, board pins by hand.
+
 ## Hardware
 
 | What | How the app reaches it |
 | --- | --- |
-| Speaker | 3.5 mm jack (ALSA card `Headphones`), through `aplay`. Volume is set with `amixer`. |
-| USB sound cards | C-Media USB cards, for the speaker test on the page. |
-| Relay shield (Inland / Keyestudio KS0212-style) | BCM GPIO 4, 22, 6, 26 for channels 1–4, through `pinctrl`. Channels 1–2 are white, 3–4 are red. |
+| Speakers | 3.5 mm jack (ALSA card `Headphones`) and C-Media USB sound cards, one `aplay` per card in use. Volumes are set with `amixer`. |
+| Relay shield (Inland / Keyestudio KS0212-style) | BCM GPIO 4, 22, 6, 26 for channels 1–4, through `pinctrl`. |
 | Lighting controller boards | Modbus TCP on `eth0`. The Pi is `192.168.50.1` and hands out `.10`–`.254`. |
 
-The `caltreat` user has to be in the `audio` and `gpio` groups. The app saves
-the boards' names (A, B, …) in `~/.config/caltreat/boards.json` on the Pi.
-That file is not part of the repo, and deploys leave it alone.
+The `caltreat` user has to be in the `audio` and `gpio` groups.
+
+## Trying it without the Pi
+
+On a computer without `aplay` the app runs with fake sound cards (two fake
+USB cards, the sound goes nowhere), and without the relays:
+
+```sh
+cd pi
+poetry install
+CALTREAT_PORT=8090 CALTREAT_HTTPS_PORT=8453 CALTREAT_CONFIG_DIR=/tmp/caltreat-config poetry run python -m caltreat
+```
+
+`CALTREAT_FAKE_AUDIO=<folder>` also writes what each card would play to raw
+files there. A fake lighting controller for the settings page:
+`python tests/fake_board.py 127.0.1.10 15020` with
+`CALTREAT_BOARD_NET=127.0.1. CALTREAT_BOARD_PORT=15020` set for the app.
+
+Tests (sequence timings, settings file, intercom, speaker and light routing;
+pytest isn't one of the app's dependencies, so the Pi's install doesn't
+change):
+
+```sh
+cd pi
+poetry run pip install pytest
+poetry run pytest
+```
 
 ## Setting up a new Pi
 
@@ -101,4 +244,5 @@ That file is not part of the repo, and deploys leave it alone.
 4. To give the lighting controllers addresses, set `eth0` to a NetworkManager
    "shared" connection with address `192.168.50.1`.
 5. From your computer, run `pi/deploy.sh`. The first deploy creates the
-   virtualenv, which needs internet on the Pi.
+   virtualenv, which needs internet on the Pi. The app needs `openssl` for
+   its https certificate (Raspberry Pi OS has it).
