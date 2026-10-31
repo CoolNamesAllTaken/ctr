@@ -19,6 +19,10 @@ from . import recordings as rec
 SPK = (("front", "F", "Front (outside, front cab)"), ("inside", "I", "Inside (passengers)"),
        ("rear", "R", "Rear (outside, back)"))
 SCRIPT = '<script src="/static/recordings.js"></script>'
+# Drawn, not emoji: a browser without an emoji font shows emoji as empty boxes
+ICON_PIN = ('<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l-1 6 3 3H7l3-3zM12 12v9"/></svg>')
+ICON_BIN = ('<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 7V4h4v3M6 7l1 13h10l1-13'
+            'M10 11v6M14 11v6"/></svg>')
 
 
 def _esc(s):
@@ -114,9 +118,9 @@ def section(store, player, live, el, sbtn, slider):
                     chips = {}
                     for sp, short, tip in SPK:
                         chips[sp] = sbtn(short, lambda sp=sp: speaker(rid, sp), f"Play on {tip}", "chip")
-                    pin = sbtn("📌", lambda: flip(rid, "pinned"), "Pin to the engineer page")
+                    pin = sbtn(ICON_PIN, lambda: flip(rid, "pinned"), "Pin to the engineer page")
                     el("a", "sbtn", "⤓", "Download (wav)", href=f"/api/recordings/{rid}.wav")
-                    sbtn("🗑", lambda: delete(rid, m["name"]), "Delete", "warn")
+                    sbtn(ICON_BIN, lambda: delete(rid, m["name"]), "Delete", "warn")
             bar = el("div", "recbar")
             with bar:
                 fill = ui.element("i")
@@ -160,7 +164,7 @@ def section(store, player, live, el, sbtn, slider):
         with ui.dialog() as d, el("div", "dlg"):
             el("b", "", f"Delete {_esc(name)}?")
             with el("div", "ctlz"):
-                sbtn("🗑 Delete", lambda: (player.stop(rid), store.delete(rid), d.close()), "Delete for good", "warn")
+                sbtn(ICON_BIN, lambda: (player.stop(rid), store.delete(rid), d.close()), "Delete for good", "warn")
                 sbtn("✕", d.close, "Cancel")
         d.open()
 

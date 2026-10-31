@@ -93,3 +93,4 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   overflow-wrap: anywhere; max-width: 100%; }
 .recbtn.on { border-color: var(--green); background: #0e3321; box-shadow: 0 0 14px rgba(47,208,122,.25); }
 .recbtn.on i { color: var(--green); }
+.sbtn svg.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
