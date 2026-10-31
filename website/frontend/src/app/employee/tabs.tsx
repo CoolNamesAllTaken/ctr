@@ -5,11 +5,12 @@ import { usePathname } from "next/navigation";
 
 const TABS = [
   { href: "/employee/live", label: "Live" },
-  { href: "/employee", label: "Trains" },
+  // Hidden from the tab bar; the pages still exist and are reachable by URL.
+  // { href: "/employee", label: "Trains" },
   { href: "/employee/stations", label: "Stations & kiosks" },
   { href: "/employee/cards", label: "Chipper cards" },
   { href: "/employee/alerts", label: "Alerts & delays" },
-  { href: "/employee/status", label: "Train status" },
+  // { href: "/employee/status", label: "Train status" },
 ] as const;
 
 export function EmployeeTabs() {
