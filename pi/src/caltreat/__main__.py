@@ -2990,7 +2990,7 @@ async def settings(client):
                                 outs = [f"R{i + 1}" for i, o in enumerate(d["relay"]) if o["fn"] == f["id"]]
                                 outs += [f"{b['name']}:GP{i}" for b in d["boards"].values()
                                          for i, o in enumerate(b["outputs"]) if o["fn"] == f["id"]]
-                                el("span", "st", " ".join(outs) or "—", "Outputs mapped to it")
+                                el("span", "st", _esc(" ".join(outs)) or "—", "Outputs mapped to it")
                                 if f["kind"] == "manual":
                                     def cyc(fid=f["id"]):
                                         io.cycle(fid)
