@@ -1045,6 +1045,8 @@ from .config import (
     BOARD_PINS,
     BUILTIN_FUNCTIONS,
     CHANNELS,
+    LAYER_KEYS,
+    LAYER_MAX,
     RELAY_CHANNELS,
     SPEAKERS,
     Config,
@@ -1054,6 +1056,7 @@ from .config import (
 )
 from .intercom import Intercom
 from .sequencer import SIGNALS, Sequencer, signal_pattern
+from .sidecar import Sidecar, V12Engine, find_node
 
 SR = hw.SR
 BLOCK = 512  # ~11 ms per synthesized block
@@ -1624,6 +1627,11 @@ class AudioOut:
             self.hiss.trigger()
             self.air_at = None
 
+    def render_buses(self):
+        """Every speaker gets the same mono mix (the old engine has no per-speaker buses)."""
+        y = self.render()
+        return {"front": y, "inside": y, "rear": y}
+
     def render(self):
         with self.lock:
             t0 = self.t
@@ -1859,7 +1867,7 @@ class Router:
                 except Exception as e:  # never let a config surprise stop the engine
                     self.error = f"speaker plan: {e}"
                     print(f"caltreat: {self.error}", file=sys.stderr)
-            y = self.audio.render()
+            bus = self.audio.render_buses()  # {front, inside, rear}: each speaker's own mix
             t_block = self.audio.t - BLOCK
             ic = self.intercom.pull(BLOCK, t_block)
             duck_to = self.intercom.duck()
@@ -1872,7 +1880,7 @@ class Router:
             for key, p in self.plan.items():
                 frames = np.zeros((BLOCK, 2))
                 for sp, mask, gain in p["outs"]:
-                    sig = y * gain * (g if sp == "inside" else 1.0)
+                    sig = bus[sp] * gain * (g if sp == "inside" else 1.0)
                     if sp in rec:  # recordings at the speaker's level, ducking the train while they play
                         sig = sig * rec[sp][1] + rec[sp][0] * gain
                     if sp == "inside" and ic is not None:
@@ -2344,7 +2352,20 @@ class BoardFinder:
 cfg = Config.load()
 if cfg.error:
     print(f"caltreat: {cfg.error}", file=sys.stderr)
-audio = AudioOut()
+# The sounds: the v12 engine (pi/engine, node sidecar) with its own mix per speaker; without node, the old numpy
+# engine (one mix on every speaker), flagged on the pages. CALTREAT_ENGINE=numpy forces the old one.
+ASSETS = cfg.folder / "assets"  # the door recording (deploy.sh copies it from the private ctr-assets repo, or upload)
+DOOR_FILES = ("doors_v10.wav", "doors_v10.json")
+node_path, node_why = find_node()
+if os.environ.get("CALTREAT_ENGINE") == "numpy" or not node_path:
+    sidecar = None
+    audio = AudioOut()
+    ENGINE_NOTE = "old sounds: " + ("CALTREAT_ENGINE=numpy" if node_path else node_why + " (README: Node.js)")
+    print(f"caltreat: {ENGINE_NOTE}", file=sys.stderr)
+else:
+    sidecar = Sidecar(node_path, warmup=os.environ.get("CALTREAT_ENGINE_WARMUP") != "0")
+    audio = V12Engine(sidecar)
+    ENGINE_NOTE = None
 intercom = Intercom(lambda: cfg.data["intercom"])
 intercom.keep_marks = bool(hw.FAKE_DIR)  # latency marks for the tests
 router = Router(audio, intercom, cfg)
@@ -2388,8 +2409,31 @@ io = Io(audio, cfg, finder, seq_status)
 
 def apply_config():
     audio.apply_mix(cfg.data["mix"])
+    if sidecar:
+        audio.apply_settings(cfg.data)
     audio.set_timing(cfg.data["timing"])
     finder.rename()
+
+
+def doors_installed():
+    return all((ASSETS / f).is_file() for f in DOOR_FILES)
+
+
+def load_doors():
+    """The door recording, if installed (else the engine plays its synth doors)."""
+    if sidecar and doors_installed():
+        audio.load_doors(ASSETS)
+
+
+def engine_status():
+    """(ok, text) for the pages: which sounds play."""
+    if not sidecar:
+        return False, "⚠ " + ENGINE_NOTE
+    if sidecar.ready:
+        return True, "v12"
+    if sidecar.error:
+        return False, "⚠ sound engine: " + sidecar.error
+    return False, "sound engine starting…"
 
 
 def apply_volumes():
@@ -2427,6 +2471,10 @@ class SeqDriver:
 
 seq_driver = SeqDriver()
 app.on_startup(apply_volumes)
+if sidecar:
+    app.on_startup(sidecar.start)
+    app.on_startup(load_doors)
+    app.on_shutdown(sidecar.stop)
 app.on_startup(router.start)
 app.on_startup(io.start)
 app.on_startup(finder.start)
@@ -2657,7 +2705,7 @@ def engineer_html():
   <section class="main">
     <button class="pad bell" id="bell" aria-pressed="false" title="Bell (B): tap on / off, 2.5 strikes/s" aria-label="Bell">
       <svg class="pi" viewBox="0 0 40 40" aria-hidden="true"><path d="M20 6c-6 0-9 5-9 11v7l-3 5h24l-3-5v-7c0-6-3-11-9-11zM16 32a4 4 0 0 0 8 0"/></svg><b>Bell</b></button>
-    <button class="pad door" id="door" aria-pressed="false" aria-label="Doors" title="Doors (D): tap to open, tap again to close (warning tone 3 s, or as long as you hold), leaves slide, closed and locked. A tap while they move reverses them.">
+    <button class="pad door" id="door" aria-pressed="false" aria-label="Doors" title="Doors (D): tap to open (release signal, unlock, slide), tap again to close (warning signal, slide, seal, lock). A tap while they move reverses them.">
       <svg class="dicon" viewBox="0 0 56 44" aria-hidden="true"><rect class="f" x="2" y="2" width="52" height="40" rx="3"/><rect class="l" id="leafL" x="5" y="5" width="22.5" height="34" rx="1.5"/><rect class="l" id="leafR" x="28.5" y="5" width="22.5" height="34" rx="1.5"/></svg><b>Doors</b></button>
     <button class="hornbtn" id="horn" aria-label="Horn (hold)" title="Horn (Space / H): hold to sound"><b>HORN</b><span>hold</span></button>
   </section>
@@ -2686,7 +2734,9 @@ def engineer_html():
 
 
 def errors():
-    errs = [f"Speaker {k}: {d.error}" for k, d in router.devices.items() if d.error]
+    ok, note = engine_status()
+    errs = [] if ok else [note]
+    errs += [f"Speaker {k}: {d.error}" for k, d in router.devices.items() if d.error]
     errs += [f"Relays: {io.error}" if io.error else "", router.error or "", cfg.error or ""]
     errs += [f"Board {b.name} ({b.host}): {b.error}" for b in finder.found if b.error and not b.connected]
     return " · ".join(e for e in errs if e)
@@ -2698,7 +2748,7 @@ def engine_state(who):
     if intercom.talking:
         talk = "me" if intercom.who == who else "busy"
     return {
-        "mph": round(audio.motor.speed * 79), "hz": round(audio.motor.speed * MOTOR["a_max"]),
+        "mph": round(audio.motor.speed * 79), "hz": round(getattr(audio, "inverter_hz", audio.motor.speed * MOTOR["a_max"])),
         "horn": audio.horn_on, "bell": audio.bell.on, "doors": audio.doors, "doorPos": round(audio.door_pos, 3),
         "thr": round(audio.motor.throttle * 100), "timing": audio.timing, "pattern": audio.busy_pattern,
         "seq": {"active": q["active"], "step": q["step"], "progress": round(q["progress"], 3),
@@ -2870,6 +2920,113 @@ def save():
     cfg.changed(0.5)
 
 
+MIX12_SLIDERS = (  # (config key = v12 intensity key, label, tooltip), as the v12 page's Mix & settings
+    ("master", "Master", "All train sounds"), ("horn", "Horn", ""), ("breath", "Horn breath", "Air under a held note"),
+    ("bell", "Bell", ""), ("motor", "Motor whine", ""),
+    ("door", "Doors", "The door recording (or the synth door signals)"),
+    ("doorMech", "Door mechanics", "Synth doors only: thumps, push-out, whine, slide, seal, lock"),
+    ("doorLeak", "Door leak", "Inside: how much louder outside sounds get while the doors are open"),
+    ("hiss", "Air & brakes", ""), ("sand", "Sander", ""),
+    ("interior", "Interior ambient", "Old HVAC / rolling ambient (inside); the Layers below are the new ones"),
+)
+LAYER_LABELS = {"hvac": ("≈", "HVAC", "Idle hum: inside the cabin air conditioning; outside the roof fans and converter"),
+                "traction": ("⊛", "Traction", "Outside: motor growl, blowers while powering or braking"),
+                "rolling": ("∼", "Rolling", "Wheel/rail noise, grows with speed"),
+                "rumble": ("▁", "Rumble", "Rolling below 250 Hz (inside: body boom)"),
+                "clatter": ("⁞", "Clatter", "Switch and crossing clatter"),
+                "whine": ("⌁", "Whine", "Inverter / motor whine (level = Mix: Motor whine)")}
+ENV_LABELS = {"dry": "Dry (on the train)", "approaching": "Approaching train (Doppler)", "platform": "Platform",
+              "distance": "Distance (~150 m)"}
+
+
+def sound_section(d, pick_doors, refresh):
+    """Settings: the v12 engine's sound options. pick_doors: opens the page's door-file picker; refresh: re-render."""
+    with el("section", "ctl set"):
+        el("h2", "", "Sound", "The v12 engine's options (as the v12 page's Layers and Mix & settings)")
+        with el("div", "rows"):
+            for k in LAYER_KEYS:
+                sym, lab, tip = LAYER_LABELS[k]
+                lay = d["layers"][k]
+                with el("div", "srow"):
+                    el("div", "nm", f"{sym} {lab}", tip)
+                    with el("div", "ctlz"):
+                        for mode, txt, mtip in (("auto", "A", "Automatic (follows the train)"), ("on", "●", "Always on"),
+                                                ("off", "○", "Muted")):
+                            sbtn(txt, lambda k=k, mode=mode: (d["layers"][k].__setitem__("mode", mode), save(),
+                                                               refresh()), mtip,
+                                 "on" if lay["mode"] == mode else "")
+                if LAYER_MAX[k] > 100 or k != "whine":
+                    slider(f"{lab} level", 0, LAYER_MAX[k], lay["v"],
+                           lambda v, k=k: (d["layers"][k].__setitem__("v", v), save()))
+            with el("div", "srow"):
+                el("div", "nm", "∴ Sander", "Sander after STOP: inside the car only, always, or never")
+                with el("div", "ctlz"):
+                    select([("inside", "Inside only"), ("always", "Always"), ("off", "Never")], d["auto_sand"],
+                           lambda v: (d.__setitem__("auto_sand", v), save()), "Sander after STOP")
+            with el("div", "srow"):
+                ok = doors_installed()
+                el("div", "nm", "▯ Doors", "The door recording is not in the repo (it isn't ours to publish): "
+                                          "deploy.sh copies it from the private ctr-assets repo, or upload "
+                                          "doors_v10.wav + doors_v10.json (or a zip of both) here")
+                with el("div", "ctlz"):
+                    el("span", "st" + ("" if ok else " bad"), "✓ recorded" if ok else "synth (no recording)",
+                       f"Files in {ASSETS}")
+                    select([("recorded", "Recorded"), ("synth", "Synth")], d["door_sound"],
+                           lambda v: (d.__setitem__("door_sound", v), save()), "Door sound (Recorded needs the files)")
+                    sbtn("⤒", pick_doors, "Upload doors_v10.wav + doors_v10.json (or a .zip of both)")
+            for bus in ("front", "rear"):
+                with el("div", "srow"):
+                    el("div", "nm", f"{bus.title()} env", "What the outside speaker sounds like: on the train (dry), "
+                                                          "a train approaching (Doppler), at a platform, far away")
+                    with el("div", "ctlz"):
+                        select(list(ENV_LABELS.items()), d["env"][bus],
+                               lambda v, bus=bus: (d["env"].__setitem__(bus, v), save()), "Outside sound")
+
+
+def save_door_file(name, data):
+    """An uploaded door file -> ASSETS (only doors_v10.wav / doors_v10.json, or those two from a zip). Returns a
+    message."""
+    import io as _io
+    import zipfile
+    low = name.lower()
+    files = {}
+    if low.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(_io.BytesIO(data)) as z:
+                for zi in z.infolist():
+                    base = zi.filename.rsplit("/", 1)[-1].lower()
+                    if base.endswith((".wav", ".json")) and zi.file_size < 20_000_000:
+                        files[base] = z.read(zi)
+        except zipfile.BadZipFile:
+            return "✗ not a zip"
+    else:
+        files[low.rsplit("/", 1)[-1]] = data
+    saved = []
+    for base, blob in files.items():
+        if base.endswith(".wav"):
+            if blob[:4] != b"RIFF" or blob[8:12] != b"WAVE":
+                return f"✗ {base}: not a WAV"
+            target = "doors_v10.wav"
+        elif base.endswith(".json"):
+            try:
+                meta = json.loads(blob)
+                assert isinstance(meta, dict) and "sr" in meta
+            except (ValueError, AssertionError):
+                return f"✗ {base}: not the doors' JSON"
+            target = "doors_v10.json"
+        elif base.endswith(".flac"):
+            return "✗ FLAC can't be read here: upload the .wav"
+        else:
+            continue
+        ASSETS.mkdir(parents=True, exist_ok=True)
+        (ASSETS / target).write_bytes(blob)
+        saved.append(target)
+    if not saved:
+        return "✗ no .wav / .json found"
+    load_doors()
+    return "✓ " + ", ".join(saved)
+
+
 @ui.page("/settings")
 async def settings(client):
     page_head("Caltreat settings")
@@ -2914,6 +3071,14 @@ async def settings(client):
     upload = ui.upload(on_upload=on_upload, auto_upload=True, max_file_size=1_000_000).props('accept=".json"') \
         .classes("hidden")
 
+    async def on_door_upload(e):
+        msg = await run.io_bound(save_door_file, e.file.name, await e.file.read())
+        ui.notify(msg, type="positive" if msg.startswith("✓") else "warning")
+        body.refresh()
+
+    door_upload = ui.upload(on_upload=on_door_upload, auto_upload=True, multiple=True, max_file_size=20_000_000) \
+        .props('accept=".wav,.json,.zip,.flac"').classes("hidden")
+
     @ui.refreshable
     def body():
         live.clear()
@@ -2933,13 +3098,20 @@ async def settings(client):
 
             # --- mix ---
             with el("section", "ctl set"):
-                el("h2", "", "Mix", "Levels of each sound, % of the engine's default; the card volumes are under "
-                                    "Speakers")
-                for k, lab, tip in (("master", "Master", "All train sounds"), ("horn", "Horn", ""),
-                                    ("bell", "Bell", ""), ("motor", "Motor whine", ""),
-                                    ("doors", "Door tone", ""), ("air", "Air", "Brake release hiss"),
-                                    ("brakes", "Brake squeal", "")):
-                    slider(lab, 0, 150, d["mix"][k], lambda v, k=k: (d["mix"].__setitem__(k, v), save()), tip or None)
+                if sidecar:
+                    el("h2", "", "Mix", "The v12 page's Mix sliders (same defaults); the card volumes are under "
+                                        "Speakers")
+                    for k, lab, tip in MIX12_SLIDERS:
+                        slider(lab, 0, 100, d["mix12"][k], lambda v, k=k: (d["mix12"].__setitem__(k, v), save()),
+                               tip or None)
+                else:
+                    el("h2", "", "Mix ⚠", "Old sound engine (node missing): levels, % of its default")
+                    for k, lab, tip in (("master", "Master", "All train sounds"), ("horn", "Horn", ""),
+                                        ("bell", "Bell", ""), ("motor", "Motor whine", ""),
+                                        ("doors", "Door tone", ""), ("air", "Air", "Brake release hiss"),
+                                        ("brakes", "Brake squeal", "")):
+                        slider(lab, 0, 150, d["mix"][k], lambda v, k=k: (d["mix"].__setitem__(k, v), save()),
+                               tip or None)
                 with el("div", "srow"):
                     el("div", "nm", "Timing", "Show: costume timing (14 s to full power, short blasts). Real: the "
                                               "railroad's (about 60 s, 2.5 s longs)")
@@ -2955,10 +3127,15 @@ async def settings(client):
                             sbtn(lab, lambda v=v: (d.__setitem__("depart_horn", v), save(), body.refresh()), None,
                                  "on" if d["depart_horn"] == v else "")
 
+            # --- v12 sound: layers, sander, doors, outside environments ---
+            if sidecar:
+                sound_section(d, lambda: door_upload.run_method("pickFiles"), body.refresh)
+
             # --- speakers ---
             with el("section", "ctl set"):
-                el("h2", "", "Speakers", "Which sound card and channel each speaker is on. The train sound plays on "
-                                         "all of them; the intercom on Inside. ▶ = 440 Hz test tone")
+                el("h2", "", "Speakers", "Which sound card and channel each speaker is on. Each plays its own v12 "
+                                         "mix (outside front, inside, outside rear); the intercom plays on Inside. "
+                                         "▶ = 440 Hz test tone")
                 with el("div", "rows"):
                     for sp in SPEAKERS:
                         s = d["speakers"][sp]
