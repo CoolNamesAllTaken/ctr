@@ -39,8 +39,8 @@ export function Timetable({
   );
 
   return (
-    <section className="flex flex-col gap-4">
-      <h2 className="text-xl font-semibold">{DIRECTION_LABELS[direction]}</h2>
+    <section className="flex flex-col gap-2">
+      <h3 className="font-semibold">{DIRECTION_LABELS[direction]}</h3>
       {columns.length === 0 ? (
         <p className={mutedClass}>No {direction} trains scheduled.</p>
       ) : (

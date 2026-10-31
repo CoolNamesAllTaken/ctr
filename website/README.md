@@ -19,7 +19,7 @@ working outside the containers (linting, adding dependencies) you'll also want
    make superuser
    ```
 3. Load the starter train cars, stations and kiosks from
-   `backend/core/starter_data.json` (or use the button on the employee page):
+   `backend/core/starter_data.json`:
    ```sh
    make starter-data
    ```
