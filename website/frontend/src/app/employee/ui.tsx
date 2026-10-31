@@ -32,3 +32,7 @@ export function formatMoney(amount: string) {
   const value = Number(amount);
   return `${value < 0 ? "-" : ""}$${Math.abs(value).toFixed(2)}`;
 }
+
+export function formatRides(rides: number) {
+  return `${rides} ride${rides === 1 ? "" : "s"}`;
+}

@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { apiFetch } from "@/lib/api";
 import type { Rider } from "../types";
-import { BackendUnreachable, formatMoney, mutedClass } from "../ui";
-import { NewRiderForm } from "./new-rider-form";
+import { BackendUnreachable, mutedClass } from "../ui";
+import { CardForms } from "./new-rider-form";
 
 export const metadata: Metadata = {
   title: "Chipper cards · Employee portal · ctr",
@@ -30,7 +30,6 @@ async function RiderList() {
           <th className="py-2 font-medium">Rider</th>
           <th className="py-2 font-medium">Costume</th>
           <th className="py-2 font-medium">Card UID</th>
-          <th className="py-2 text-right font-medium">Balance</th>
         </tr>
       </thead>
       <tbody>
@@ -43,9 +42,6 @@ async function RiderList() {
             <td className="py-2">{rider.costume}</td>
             <td className="py-2 font-mono text-sm">
               {rider.card_uid ?? <span className="text-zinc-500">No card</span>}
-            </td>
-            <td className="py-2 text-right tabular-nums">
-              {rider.balance ? formatMoney(rider.balance) : "—"}
             </td>
           </tr>
         ))}
@@ -61,9 +57,10 @@ export default function CardsPage() {
         <h2 className="text-xl font-semibold">Set up a Chipper card</h2>
         <p className={mutedClass}>
           Creates a new rider and gives them a new card. Tap the card on the
-          reader to fill in its UID.
+          reader, and it&apos;s loaded with the rides before the rider is saved.
+          Rides live on the card, not here.
         </p>
-        <NewRiderForm />
+        <CardForms />
       </section>
 
       <section className="flex flex-col gap-4">

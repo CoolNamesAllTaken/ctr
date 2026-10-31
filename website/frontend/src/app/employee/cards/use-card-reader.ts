@@ -6,6 +6,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import {
+  CardError,
+  type CardInfo,
   CardReader,
   getSerial,
   isReaderPort,
@@ -19,6 +21,14 @@ export type ReaderStatus =
   | { kind: "ready" }
   | { kind: "error"; message: string };
 
+export type TappedCard = { uid: string; info: CardInfo };
+
+type Job = {
+  run(reader: CardReader): Promise<CardInfo>;
+  resolve(info: CardInfo): void;
+  reject(error: unknown): void;
+};
+
 const POLL_MS = 250;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -26,11 +36,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const noSubscribe = () => () => {};
 
 /**
- * Watches the USB card reader and calls onCard with each newly tapped card's
- * UID. Reconnects by itself to a reader the browser has been allowed to use
- * before; connect() asks for one the first time.
+ * Watches the USB card reader and calls onCard with each newly tapped card
+ * (its UID and ride block), or null when it's taken off. Reconnects by itself
+ * to a reader the browser has been allowed to use before; connect() asks for
+ * one the first time.
  */
-export function useCardReader(onCard: (uid: string) => void) {
+export function useCardReader(onCard: (card: TappedCard | null) => void) {
   // Assumed on the server, so the page renders the same until it hydrates.
   const supported = useSyncExternalStore(
     noSubscribe,
@@ -51,6 +62,9 @@ export function useCardReader(onCard: (uid: string) => void) {
     done: Promise<void>;
   } | null>(null);
 
+  // Card writes waiting for the poll loop, which owns the port.
+  const jobs = useRef<Job[]>([]);
+
   const stop = useCallback(() => session.current?.stop.abort(), []);
 
   const start = useCallback((port: SerialPort) => {
@@ -70,8 +84,22 @@ export function useCardReader(onCard: (uid: string) => void) {
         report({ kind: "ready" });
         let last: string | null = null;
         while (!abort.signal.aborted) {
+          const job = jobs.current.shift();
+          if (job) {
+            try {
+              job.resolve(await job.run(reader));
+            } catch (error) {
+              job.reject(error);
+              if (!(error instanceof CardError)) throw error;
+            }
+            continue;
+          }
           const uid = await reader.readUid();
-          if (uid && uid !== last) onCardRef.current(uid);
+          if (uid !== last) {
+            onCardRef.current(
+              uid ? { uid, info: await reader.readChipper(uid) } : null,
+            );
+          }
           last = uid;
           await sleep(POLL_MS);
         }
@@ -86,6 +114,9 @@ export function useCardReader(onCard: (uid: string) => void) {
               : "Lost the card reader.",
         });
       } finally {
+        for (const job of jobs.current.splice(0)) {
+          job.reject(new Error("Lost the card reader."));
+        }
         await reader?.close();
       }
     })();
@@ -134,5 +165,27 @@ export function useCardReader(onCard: (uid: string) => void) {
     }
   }, [start]);
 
-  return { supported, status, connect };
+  /** Writes a ride block holding `rides` to the card with this UID. */
+  const writeRides = useCallback(
+    (uid: string, rides: number) =>
+      new Promise<CardInfo>((resolve, reject) => {
+        if (status.kind !== "ready") {
+          reject(new Error("Connect the card reader first."));
+          return;
+        }
+        jobs.current.push({
+          async run(reader) {
+            await reader.writeChipper(uid, rides);
+            const info = await reader.readChipper(uid);
+            onCardRef.current({ uid, info });
+            return info;
+          },
+          resolve,
+          reject,
+        });
+      }),
+    [status.kind],
+  );
+
+  return { supported, status, connect, writeRides };
 }
