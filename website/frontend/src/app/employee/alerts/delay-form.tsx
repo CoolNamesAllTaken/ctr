@@ -2,10 +2,10 @@
 
 import { startTransition, useActionState, useState } from "react";
 import type { ActionState } from "../action-state";
+import { formatTime } from "../format";
 import type { Alert, TrainRun } from "../types";
 import { ActionMessage, inputClass, primaryButtonClass } from "../ui";
 import { setDelay } from "./actions";
-import { formatTime } from "./format";
 
 export function DelayForm({
   runs,

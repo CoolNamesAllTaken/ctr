@@ -106,32 +106,18 @@ export function NewRiderForm() {
         </label>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-[1fr_auto]">
-        <div className="flex flex-col gap-1 text-sm font-medium">
-          <label htmlFor="card_uid">Card UID</label>
-          <input
-            id="card_uid"
-            name="card_uid"
-            required
-            value={uid}
-            onChange={(e) => setUid(e.target.value)}
-            placeholder="Tap a card on the reader"
-            className={`${inputClass} font-mono`}
-          />
-          <ReaderStatusLine reader={reader} />
-        </div>
-        <label className="flex flex-col gap-1 text-sm font-medium">
-          Starting balance ($)
-          <input
-            name="balance"
-            type="number"
-            required
-            min="0"
-            step="0.01"
-            defaultValue="20.00"
-            className={`${inputClass} sm:w-32`}
-          />
-        </label>
+      <div className="flex flex-col gap-1 text-sm font-medium">
+        <label htmlFor="card_uid">Card UID</label>
+        <input
+          id="card_uid"
+          name="card_uid"
+          required
+          value={uid}
+          onChange={(e) => setUid(e.target.value)}
+          placeholder="Tap a card on the reader"
+          className={`${inputClass} font-mono`}
+        />
+        <ReaderStatusLine reader={reader} />
       </div>
 
       <div className="flex items-center gap-4">

@@ -42,24 +42,6 @@ export type Kiosk = {
   station_name: string | null;
 };
 
-export type Tap = {
-  id: number;
-  kind: "tap_on" | "tap_off";
-  card_uid: string;
-  rider_name: string | null;
-  station_name: string;
-  kiosk_name: string;
-  tap_time: string;
-  card_charge: string;
-  balance_after: string;
-};
-
-export type TapResult = {
-  tap: Tap;
-  from_station: string | null;
-  trip_fare: string | null;
-};
-
 export type Alert = {
   id: number;
   message: string;

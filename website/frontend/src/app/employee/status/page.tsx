@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { apiFetch } from "@/lib/api";
-import { formatTime } from "../delays/format";
+import { formatTime } from "../format";
 import { DIRECTION_LABELS, type TrainStatus } from "../types";
 import { BackendUnreachable, mutedClass } from "../ui";
 import { StatusControls } from "./status-controls";

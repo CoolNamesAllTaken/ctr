@@ -9,10 +9,13 @@ export const metadata: Metadata = {
   title: "Chipper cards · Employee portal · ctr",
 };
 
+// How many of the most recently set up riders to list.
+const RECENT_RIDERS = 10;
+
 async function RiderList() {
   let riders: Rider[];
   try {
-    riders = await apiFetch<Rider[]>("/api/riders/");
+    riders = await apiFetch<Rider[]>(`/api/riders/?limit=${RECENT_RIDERS}`);
   } catch {
     return <BackendUnreachable />;
   }
@@ -64,7 +67,10 @@ export default function CardsPage() {
       </section>
 
       <section className="flex flex-col gap-4">
-        <h2 className="text-xl font-semibold">Riders</h2>
+        <h2 className="text-xl font-semibold">Recent riders</h2>
+        <p className={mutedClass}>
+          The {RECENT_RIDERS} most recently set up, newest first.
+        </p>
         <Suspense fallback={<p className="text-zinc-500">Loading…</p>}>
           <RiderList />
         </Suspense>

@@ -1,6 +1,6 @@
 import re
 import secrets
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Literal
 
@@ -91,6 +91,27 @@ class TrainIn(Schema):
     direction: Train.Direction
     traincar_id: int
     arrivals: list[ArrivalIn]
+
+
+class TrainSeriesIn(Schema):
+    """Several trains running the same stops, evenly spaced."""
+
+    # The first train's number; the rest count up from it.
+    first_number: int = Field(ge=0)
+    count: int = Field(ge=1, le=100)
+    direction: Train.Direction
+    traincar_id: int
+    # The stations it stops at, in any order; trains call at them in the order
+    # they reach them.
+    station_ids: list[int]
+    # When the first train leaves its first stop.
+    first_departure: time
+    minutes_between_trains: int = Field(ge=1, le=24 * 60)
+    minutes_between_stops: int = Field(ge=1, le=24 * 60)
+
+
+class TrainPatch(Schema):
+    name: str
 
 
 class TrainOut(Schema):
@@ -220,13 +241,31 @@ def list_trains(request):
     return Train.objects.order_by("name")
 
 
-@router.post("/trains/", response={201: TrainOut})
-def create_train(request, payload: TrainIn):
-    name = payload.name.strip()
-    if not name:
-        raise HttpError(422, "Train name is required.")
+def get_train(train_id):
+    train = Train.objects.filter(id=train_id).first()
+    if train is None:
+        raise HttpError(422, "That train no longer exists.")
+    return train
 
-    station_ids = [a.station_id for a in payload.arrivals]
+
+def check_train_names_free(names, train=None):
+    others = Train.objects.exclude(id=train.id) if train else Train.objects
+    taken = sorted(others.filter(name__in=names).values_list("name", flat=True))
+    if len(taken) == 1:
+        raise HttpError(422, f"There's already a train {taken[0]}.")
+    if taken:
+        raise HttpError(422, f"There are already trains {', '.join(taken)}.")
+
+
+def get_traincar(traincar_id):
+    traincar = TrainCar.objects.filter(id=traincar_id).first()
+    if traincar is None:
+        raise HttpError(422, "That train car no longer exists.")
+    return traincar
+
+
+def get_stops(station_ids):
+    """The stations a train stops at, by ID."""
     if len(station_ids) < 2:
         raise HttpError(422, "A train needs at least two stops.")
     if len(set(station_ids)) != len(station_ids):
@@ -234,10 +273,16 @@ def create_train(request, payload: TrainIn):
     stations = Station.objects.in_bulk(station_ids)
     if len(stations) != len(station_ids):
         raise HttpError(422, "A station on this train no longer exists.")
+    return stations
 
-    traincar = TrainCar.objects.filter(id=payload.traincar_id).first()
-    if traincar is None:
-        raise HttpError(422, "That train car no longer exists.")
+
+@router.post("/trains/", response={201: TrainOut})
+def create_train(request, payload: TrainIn):
+    name = payload.name.strip()
+    if not name:
+        raise HttpError(422, "Train name is required.")
+    stations = get_stops([a.station_id for a in payload.arrivals])
+    traincar = get_traincar(payload.traincar_id)
 
     with transaction.atomic():
         train = Train.objects.create(
@@ -248,6 +293,63 @@ def create_train(request, payload: TrainIn):
             for a in payload.arrivals
         )
     return Status(201, train)
+
+
+@router.post("/trains/series/", response={201: list[TrainOut]})
+def create_train_series(request, payload: TrainSeriesIn):
+    """Add evenly spaced trains, numbered up from the first, each taking the
+    same time between stops."""
+    stops = sorted(
+        get_stops(payload.station_ids).values(), key=lambda station: station.position
+    )
+    if payload.direction == Train.Direction.SOUTHBOUND:
+        stops.reverse()
+    traincar = get_traincar(payload.traincar_id)
+
+    # Times are of day, so every train has to finish before midnight.
+    start = datetime.combine(date.min, payload.first_departure)
+    last_arrival = start + timedelta(
+        minutes=payload.minutes_between_trains * (payload.count - 1)
+        + payload.minutes_between_stops * (len(stops) - 1)
+    )
+    if last_arrival.date() != start.date():
+        raise HttpError(422, "The last train would run past midnight.")
+
+    names = [str(payload.first_number + i) for i in range(payload.count)]
+    check_train_names_free(names)
+
+    with transaction.atomic():
+        trains = []
+        for i, name in enumerate(names):
+            train = Train.objects.create(
+                name=name, direction=payload.direction, traincar=traincar
+            )
+            departure = start + timedelta(minutes=payload.minutes_between_trains * i)
+            Arrival.objects.bulk_create(
+                Arrival(
+                    train=train,
+                    station=station,
+                    time=(
+                        departure + timedelta(minutes=payload.minutes_between_stops * j)
+                    ).time(),
+                )
+                for j, station in enumerate(stops)
+            )
+            trains.append(train)
+    return Status(201, trains)
+
+
+@router.patch("/trains/{train_id}/", response=TrainOut)
+def update_train(request, train_id: int, payload: TrainPatch):
+    """Change a train's number."""
+    train = get_train(train_id)
+    name = payload.name.strip()
+    if not name:
+        raise HttpError(422, "Train number is required.")
+    check_train_names_free([name], train)
+    train.name = name
+    train.save(update_fields=["name"])
+    return train
 
 
 class StarterDataOut(Schema):
@@ -269,11 +371,15 @@ def create_starter_data(request):
         ) from error
 
 
+# What a new Chipper card is loaded with.
+STARTING_BALANCE = Decimal("20.00")
+
+
 class RiderIn(Schema):
     name: str
     costume: str = ""
     card_uid: str
-    balance: Decimal = Field(ge=0, max_digits=8, decimal_places=2)
+    balance: Decimal = Field(STARTING_BALANCE, ge=0, max_digits=8, decimal_places=2)
 
 
 class RiderOut(Schema):
@@ -293,8 +399,9 @@ def normalize_uid(uid):
 
 
 @router.get("/riders/", response=list[RiderOut])
-def list_riders(request):
-    return Rider.objects.select_related("card").order_by("name")
+def list_riders(request, limit: int = 20):
+    """The most recently set up riders, newest first."""
+    return Rider.objects.select_related("card").order_by("-id")[:limit]
 
 
 @router.post("/riders/", response={201: RiderOut})
@@ -458,6 +565,11 @@ class AlertIn(Schema):
     train_id: int | None = None
 
 
+class AlertPatch(Schema):
+    # False cancels the alert, taking it down for riders.
+    is_active: bool
+
+
 class AlertOut(Schema):
     id: int
     message: str
@@ -489,6 +601,17 @@ def create_alert(request, payload: AlertIn):
             raise HttpError(422, "That train no longer exists.")
 
     return Status(201, Alert.objects.create(message=message, train=train))
+
+
+@router.patch("/alerts/{alert_id}/", response=AlertOut)
+def update_alert(request, alert_id: int, payload: AlertPatch):
+    """Cancel an alert, or put a canceled one back up."""
+    alert = Alert.objects.select_related("train").filter(id=alert_id).first()
+    if alert is None:
+        raise HttpError(422, "That alert no longer exists.")
+    alert.is_active = payload.is_active
+    alert.save(update_fields=["is_active"])
+    return alert
 
 
 class StopDelayOut(Schema):
@@ -567,13 +690,6 @@ class TrainStatusOut(TrainRunOut):
     updated_at: datetime | None
 
 
-def get_train(train_id):
-    train = Train.objects.filter(id=train_id).first()
-    if train is None:
-        raise HttpError(422, "That train no longer exists.")
-    return train
-
-
 @router.get("/train-statuses/", response=list[TrainStatusOut])
 def list_train_statuses(request):
     """Today's run of every train, with what the conductor last marked it."""
@@ -614,10 +730,39 @@ class TimetableOut(Schema):
     alerts: list[AlertOut]
 
 
-@router.get("/timetable/", response=TimetableOut, auth=None)
-def timetable(request):
-    """Today's timetable with live delays, and the active service alerts."""
+class KioskTrainOut(Schema):
+    train_name: str
+    # When the train is scheduled at the kiosk's station.
+    time: time
+    delay_minutes: int
+
+
+@router.get("/timetable/", response=TimetableOut | list[KioskTrainOut], auth=None)
+def timetable(request, kiosk_id: str | None = None):
+    """Today's timetable with live delays, and the active service alerts.
+    Pass a kiosk's ID to get just the trains stopping at its station, in a
+    short form for the kiosk's display."""
     today = timezone.localdate()
+    if kiosk_id is not None:
+        kiosk = Kiosk.objects.filter(id=kiosk_id.strip()).first()
+        if kiosk is None:
+            raise HttpError(404, "There's no kiosk with that ID.")
+        if kiosk.station_id is None:
+            return []
+        runs = delays.train_runs(
+            today, Train.objects.filter(arrivals__station=kiosk.station_id).distinct()
+        )
+        trains = [
+            {
+                "train_name": run["train_name"],
+                "time": timezone.localtime(stop["scheduled_at"]).time(),
+                "delay_minutes": stop["delay_minutes"],
+            }
+            for run in runs
+            for stop in run["stops"]
+            if stop["station_id"] == kiosk.station_id
+        ]
+        return sorted(trains, key=lambda train: train["time"])
     return {
         "date": today,
         "stations": Station.objects.all(),

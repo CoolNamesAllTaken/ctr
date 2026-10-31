@@ -1,24 +1,17 @@
-import type { Metadata } from "next";
-import { Suspense } from "react";
-import { apiFetch } from "@/lib/api";
 import {
   DIRECTION_LABELS,
   type Direction,
   type Station,
   type Train,
-} from "../types";
-import { BackendUnreachable, mutedClass } from "../ui";
-
-export const metadata: Metadata = {
-  title: "Schedule · Employee portal · ctr",
-};
+} from "./types";
+import { mutedClass } from "./ui";
 
 function formatTime(time: string) {
   return time.slice(0, 5);
 }
 
 /** A timetable for one direction: stations down the side, trains across. */
-function Timetable({
+export function Timetable({
   direction,
   stations,
   trains,
@@ -99,41 +92,5 @@ function Timetable({
         </div>
       )}
     </section>
-  );
-}
-
-async function Schedule() {
-  let data: [Station[], Train[]];
-  try {
-    data = await Promise.all([
-      apiFetch<Station[]>("/api/stations/"),
-      apiFetch<Train[]>("/api/trains/"),
-    ]);
-  } catch {
-    return <BackendUnreachable />;
-  }
-  const [stations, trains] = data;
-
-  if (trains.length === 0) {
-    return (
-      <p className={mutedClass}>
-        No trains scheduled yet. Add one on the Trains tab.
-      </p>
-    );
-  }
-
-  return (
-    <>
-      <Timetable direction="northbound" stations={stations} trains={trains} />
-      <Timetable direction="southbound" stations={stations} trains={trains} />
-    </>
-  );
-}
-
-export default function SchedulePage() {
-  return (
-    <Suspense fallback={<p className="text-zinc-500">Loading…</p>}>
-      <Schedule />
-    </Suspense>
   );
 }
