@@ -1,6 +1,7 @@
-from datetime import time
+from datetime import datetime, time
 
 import pytest
+from django.utils import timezone
 
 from core.models import Alert, Arrival, ArrivalInstance, Station, Train, TrainCar
 
@@ -58,6 +59,30 @@ def test_list_delays_orders_by_departure(client, train, stations):
     response = client.get("/api/delays/")
 
     assert [run["train_name"] for run in response.json()] == ["99", "101"]
+
+
+@pytest.mark.django_db
+def test_list_delays_upcoming(client, train, stations, monkeypatch):
+    now = timezone.make_aware(datetime(2026, 10, 31, 10, 30))
+    monkeypatch.setattr(timezone, "now", lambda: now)
+    car = train.traincar
+
+    def run(name, ends_at):
+        run = Train.objects.create(name=name, direction="southbound", traincar=car)
+        Arrival.objects.create(train=run, station=stations[2], time=time(6))
+        Arrival.objects.create(train=run, station=stations[0], time=ends_at)
+        return run
+
+    # 101 finished at 10:00.
+    run("99", time(10, 45))
+    Train.objects.create(name="no stops", direction="northbound", traincar=car)
+    # Due to finish at 10:00 too, but running late puts it at 10:30.
+    late = run("103", time(10))
+    post(client, {"train_id": late.id, "delay_minutes": 30})
+
+    response = client.get("/api/delays/?upcoming=true")
+
+    assert [run["train_name"] for run in response.json()] == ["99", "103"]
 
 
 @pytest.mark.django_db
