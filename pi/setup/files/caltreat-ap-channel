@@ -4,7 +4,10 @@
 #  - wlan0 connected: the access point moves to wlan0's channel (phones on it reconnect by themselves).
 #  - wlan0 not connected but its network is in the last scan: the access point moves there, so wlan0 can join.
 #  - neither: the access point stays where it is (on its last or the default channel).
-# It also brings the access point back up if it is down. Runs from the NetworkManager dispatcher (wlan0 up/down)
+# A running access point is restarted only when it must move: never while it is up on the right channel. While
+# wlan0 is not joined, a move waits until the network is seen on the same channel twice in a row (a minute apart)
+# and happens at most every 5 minutes, so a flickering Wi-Fi doesn't drop every phone each minute.
+# It also brings the access point back up if it is down, and turns Wi-Fi power saving off (wlan0 and uap0). Runs from the NetworkManager dispatcher (wlan0 up/down)
 # and from caltreat-ap-channel.timer (every minute). Installed by pi/setup/network.sh.
 #
 # --restart: restart the access point even if its channel is right and it is up, so changed settings (a new
@@ -32,8 +35,10 @@ if [[ ! -e "${CALTREAT_SYS:-/sys}/class/net/$AP_IFACE" ]]; then
 fi
 
 target=""
+joined=""
 if [[ "$SHARED_RADIO" == 1 ]]; then
   if iw dev "$STA_IFACE" link 2>/dev/null | grep -q '^Connected'; then
+    joined=1
     target="$(iw dev "$STA_IFACE" info | awk '$1 == "channel" { print $2; exit }')"
   else
     # Strongest access point of the network to join, from NetworkManager's last scan (SSID last: it may hold ':').
@@ -46,22 +51,74 @@ if [[ "$SHARED_RADIO" == 1 ]]; then
   fi
 fi
 
-current="$(nmcli -g 802-11-wireless.channel connection show "$AP_CON")"
-if [[ -n "$target" && "$target" != "$current" ]]; then
-  if ((target >= 52 && target <= 144)); then
+current="$(nmcli -g 802-11-wireless.channel connection show "$AP_CON")"  # the saved channel
+ap_up=""
+nmcli -t -f NAME connection show --active | grep -qxF "$AP_CON" && ap_up=1
+actual=""  # the channel the access point really is on (the radio may have moved it)
+[[ -n "$ap_up" ]] && actual="$(iw dev "$AP_IFACE" info 2>/dev/null | awk '$1 == "channel" { print $2; exit }')"
+STATE="${CALTREAT_AP_STATE:-/run/caltreat-ap-channel.state}"  # "pending moved": a seen target, the last move (epoch)
+read -r pending moved 2>/dev/null < "$STATE" || true
+[[ "${pending:-}" == - ]] && pending=""  # "-": none (an empty first field would shift "moved" into it)
+pending="${pending:-}"
+moved="${moved:-0}"
+now="$(date +%s)"
+save_state() { printf '%s %s\n' "${1:--}" "${2:-$moved}" > "$STATE" 2>/dev/null || true; }
+MOVE_GAP=300  # s: while not joined, at most one move per this
+
+move() {  # move the access point to $target (restarts it: every phone reconnects)
+  local band="bg"
+  ((target > 14)) && band=a
+  log "moving the access point from channel ${actual:-$current} to $target ($1)"
+  nmcli connection modify "$AP_CON" 802-11-wireless.band "$band" 802-11-wireless.channel "$target"
+  nmcli connection up "$AP_CON" >/dev/null || log "could not start $AP_CON (see: journalctl -u NetworkManager)"
+  save_state "" "$now"
+}
+
+power_save_off() {  # Wi-Fi power saving makes the shared radio drop frames and adds latency spikes
+  local ifc
+  for ifc in "$STA_IFACE" "$AP_IFACE"; do
+    if iw dev "$ifc" get power_save 2>/dev/null | grep -q 'Power save: on'; then
+      iw dev "$ifc" set power_save off 2>/dev/null && log "turned Wi-Fi power saving off on $ifc"
+    fi
+  done
+}
+trap power_save_off EXIT
+
+if [[ -n "$target" ]] && ((target >= 52 && target <= 144)); then
+  if [[ "$target" != "$current" ]]; then
     log "$STA_SSID is on channel $target, a radar (DFS) channel the access point can't use; keeping channel $current." \
       "Put $STA_SSID on 2.4 GHz (1-11) or 5 GHz channel 36-48 / 149-165."
-  else
-    band="bg"
-    ((target > 14)) && band=a
-    log "moving the access point from channel $current to $target (the channel of $STA_SSID)"
-    nmcli connection modify "$AP_CON" 802-11-wireless.band "$band" 802-11-wireless.channel "$target"
-    nmcli connection up "$AP_CON" >/dev/null
-    exit 0
   fi
+  target=""
 fi
 
-if ! nmcli -t -f NAME connection show --active | grep -qxF "$AP_CON"; then
+if [[ -n "$target" && -n "$ap_up" && "$actual" == "$target" ]]; then
+  # Up and on the right channel: never restart it. Only keep the saved channel in step (no restart).
+  if [[ "$current" != "$target" ]]; then
+    band="bg"
+    ((target > 14)) && band=a
+    nmcli connection modify "$AP_CON" 802-11-wireless.band "$band" 802-11-wireless.channel "$target"
+  fi
+  [[ -n "$pending" ]] && save_state ""
+elif [[ -n "$target" && "$target" != "${actual:-$current}" ]]; then
+  if [[ -n "$joined" ]]; then
+    move "the channel $STA_SSID is on"  # one radio: the access point must follow
+    exit 0
+  elif [[ -z "$ap_up" ]]; then
+    move "where $STA_SSID was seen"
+    exit 0
+  elif [[ "$pending" == "$target" ]] && ((now - moved >= MOVE_GAP)); then
+    move "where $STA_SSID has been seen for a minute"
+    exit 0
+  elif [[ "$pending" != "$target" ]]; then
+    log "$STA_SSID is seen on channel $target (not joined): the access point moves there if it still is next time"
+    save_state "$target"
+  fi
+elif [[ -n "$pending" ]]; then
+  save_state ""
+fi
+
+if [[ -z "$ap_up" ]]; then
   log "access point $AP_CON is down, starting it"
   nmcli connection up "$AP_CON" >/dev/null || log "could not start $AP_CON (see: journalctl -u NetworkManager)"
 elif [[ -n "$RESTART" ]]; then

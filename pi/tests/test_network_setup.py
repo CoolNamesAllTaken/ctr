@@ -32,6 +32,8 @@ case "$me $*" in
   "iw reg get") echo "global"; echo "country US: DFS-FCC" ;;
   "iw dev wlan0 link") cat "$d/link" 2>/dev/null || echo "Not connected." ;;
   "iw dev wlan0 info") echo "Interface wlan0"; echo "	channel $(cat "$d/stachan" 2>/dev/null) (2462 MHz)" ;;
+  "iw dev uap0 info") [[ -f "$d/apactual" ]] && { echo "Interface uap0"; echo "	channel $(cat "$d/apactual") (2437 MHz)"; } ;;
+  "iw dev "*" get power_save") a=($*); cat "$d/ps-${a[1]}" 2>/dev/null || echo "Power save: off" ;;
   "systemctl is-active"*) exit 0 ;;
   "systemctl is-enabled"*) exit 1 ;;
   "sysctl -n"*) echo 1024 ;;
@@ -61,6 +63,7 @@ class Pi:
             "CALTREAT_SETUP_ROOT": str(self.root), "CALTREAT_SYS": str(self.sys),
             "CALTREAT_NETWORK_CONF": str(self.root / "etc/caltreat/network.conf"),
             "CALTREAT_SBIN": str(self.root / "usr/local/sbin"), "CALTREAT_LOCK": str(tmp / "lock"),
+            "CALTREAT_AP_STATE": str(tmp / "ap-state"),
         }
 
     def run(self, *args, script=SETUP / "network.sh", **env):
@@ -223,8 +226,50 @@ def test_ap_follows_the_joined_wifi(helper):
 
 def test_ap_moves_to_where_the_wifi_is_seen_when_not_joined(helper):
     helper.set("scan", "1:30:other\n36:70:caltreat\n6:40:caltreat\n149:50:Neigh\\:bor\n")
-    r = channel(helper)
+    r = channel(helper)  # first sighting: wait (a flickering Wi-Fi must not restart the AP each minute)
+    assert "modify" not in r.log and "connection up" not in r.log and "moves there if it still is" in r.stdout
+    r = channel(helper)  # still there a minute later: move
     assert "802-11-wireless.band a 802-11-wireless.channel 36" in r.log
+    assert r.log.count("nmcli connection up caltreat-ap") == 1
+
+
+def test_not_joined_moves_at_most_every_5_minutes(helper):
+    helper.set("scan", "36:70:caltreat\n")
+    channel(helper)
+    assert "channel 36" in channel(helper).log
+    helper.set("apchan", "36\n")
+    helper.set("scan", "11:70:caltreat\n")  # the network shows up elsewhere right after
+    for _ in range(3):
+        r = channel(helper)
+        assert "modify" not in r.log and "connection up" not in r.log
+    moved = int((helper.tmp / "ap-state").read_text().split()[1])
+    (helper.tmp / "ap-state").write_text(f"11 {moved - 301}\n")
+    assert "802-11-wireless.channel 11" in channel(helper).log
+
+
+def test_not_joined_moves_at_once_when_the_ap_is_down(helper):
+    helper.set("active", "preconfigured\n")
+    helper.set("scan", "36:70:caltreat\n")
+    r = channel(helper)
+    assert "802-11-wireless.channel 36" in r.log and r.log.count("nmcli connection up caltreat-ap") == 1
+
+
+def test_up_on_the_right_channel_is_never_restarted(helper):
+    # the radio moved the AP with wlan0 already (saved channel says 6, it really is on 11): only save the channel
+    helper.set("link", "Connected to 11:22:33:44:55:66 (on wlan0)\n")
+    helper.set("stachan", "11")
+    helper.set("apactual", "11")
+    r = channel(helper)
+    assert "802-11-wireless.channel 11" in r.log and "connection up" not in r.log
+    r = helper.run("--restart", script=helper.file("usr/local/sbin/caltreat-ap-channel"))  # unless asked to
+    assert r.log.count("nmcli connection up caltreat-ap") == 1
+
+
+def test_power_save_is_turned_off(helper):
+    helper.set("ps-wlan0", "Power save: on\n")
+    r = channel(helper)
+    assert "iw dev wlan0 set power_save off" in r.log and "iw dev uap0 set power_save" not in r.log
+    assert "turned Wi-Fi power saving off on wlan0" in r.stdout
 
 
 def test_ap_stays_off_radar_channels(helper):
@@ -276,3 +321,20 @@ def test_dispatcher(helper):
         log = (helper.stub / "log").read_text()
         assert ("systemctl start --no-block caltreat-ap-channel.service" in log) == expect, args
         (helper.stub / "log").write_text("")
+
+
+def test_sound_priority_and_power_save(pi):
+    import getpass
+    me = getpass.getuser()
+    r = pi.run(AP_PASS=SECRET_AP, STA_PASS=SECRET_STA, APP_USER=me, CALTREAT_SETUP_APPLY="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    prio = pi.file(f"etc/systemd/system/user@{os.getuid()}.service.d/90-caltreat-sound.conf")
+    assert "[Service]\nLimitNICE=-10\n" in prio.read_text()
+    assert "systemctl daemon-reload" in r.log and "after a reboot" in r.stdout
+    nm = pi.file("etc/NetworkManager/conf.d/90-caltreat.conf").read_text()
+    assert "[connection-caltreat-powersave]\n" in nm and "\nwifi.powersave=2\n" in nm
+    pi.set("conns", "caltreat-ap:802-11-wireless\n")
+    r = pi.run("--undo", APP_USER=me, CALTREAT_SETUP_APPLY="1")
+    assert r.returncode == 0 and not prio.exists()
+    r = pi.run(AP_PASS=SECRET_AP, STA_PASS=SECRET_STA, APP_USER="no-such-user-xyz")
+    assert r.returncode == 0 and "no user" in r.stderr

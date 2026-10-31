@@ -15,6 +15,9 @@
 #     adapter (AP_IFACE=wlan1) the access point gets its own radio instead.
 #  3. Names: caltreat.local by mDNS (avahi, on every interface) and by the access point's DNS (for phones
 #     whose mDNS doesn't work).
+#  4. Sound priority: lets the app (a user service) run its sound threads, aplay and the sound engine at a higher
+#     priority than its web pages (LimitNICE for the app user's services; takes effect after a reboot).
+#  Wi-Fi power saving is turned off (it makes the shared radio drop frames and adds latency spikes).
 # The wired network for the lighting controllers (eth0, 192.168.50.1) is left alone.
 #
 # Settings (environment, or asked for when missing):
@@ -22,6 +25,7 @@
 #   AP_SSID (Caltreat Cab)  AP_PASS    the Pi's own network; WPA2, 8-63 characters; unset keeps the saved one
 #   AP_ADDR (10.42.0.1/24)  AP_CHANNEL (6: used until the joined network is found)  WIFI_COUNTRY (e.g. US)
 #   STA_IFACE (wlan0)  AP_IFACE (uap0, or a USB adapter such as wlan1)
+#   APP_USER (the user running sudo, else caltreat)   the user whose service runs the app
 # Passwords go only into NetworkManager's connection files (/etc/NetworkManager/system-connections, root only).
 set -euo pipefail
 
@@ -46,6 +50,8 @@ AP_CHANNEL="${AP_CHANNEL:-6}"
 STA_IFACE="${STA_IFACE:-wlan0}"
 AP_IFACE="${AP_IFACE:-uap0}"
 WIFI_COUNTRY="${WIFI_COUNTRY:-}"
+APP_USER="${APP_USER:-${SUDO_USER:-caltreat}}"
+APP_UID="$(id -u "$APP_USER" 2>/dev/null || true)"
 AP_CON=caltreat-ap
 STA_CON=caltreat-sta
 AP_IP="${AP_ADDR%/*}"
@@ -63,6 +69,8 @@ NMCONF_FILE="$NMDIR/conf.d/90-caltreat.conf"
 DISPATCH_FILE="$NMDIR/dispatcher.d/90-caltreat-ap"
 SBIN="$ROOT/usr/local/sbin"
 UNITS="$ROOT/etc/systemd/system"
+PRIO_FILE=""
+[[ -n "$APP_UID" ]] && PRIO_FILE="$UNITS/user@$APP_UID.service.d/90-caltreat-sound.conf"
 
 say() { printf '\n==> %s\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
@@ -161,7 +169,7 @@ if ((UNDO)); then
   fi
   for f in "$UNITS/caltreat-ap-channel.timer" "$UNITS/caltreat-ap-channel.service" "$UNITS/caltreat-uap0.service" \
     "$SBIN/caltreat-ap-channel" "$SBIN/caltreat-uap0" "$DISPATCH_FILE" "$DNSMASQ_FILE" "$NMCONF_FILE" \
-    "$HOSTS_FILE" "$CONF_FILE" "$SYSCTL_FILE"; do
+    "$HOSTS_FILE" "$CONF_FILE" "$SYSCTL_FILE" ${PRIO_FILE:+"$PRIO_FILE"}; do
     del_file "$f"
   done
   if [[ -e $SYS/class/net/uap0 && "$AP_IFACE" == uap0 ]] && have iw; then run iw dev uap0 del || true; fi
@@ -353,6 +361,11 @@ put_file "$NMCONF_FILE" 644 <<EOF
 match-device=interface-name:$AP_IFACE
 # no random MAC addresses while scanning on the access point's interface
 wifi.scan-rand-mac-address=no
+
+[connection-caltreat-powersave]
+# Wi-Fi power saving off for every Wi-Fi connection (2 = disable): on the shared radio it drops frames and adds
+# latency spikes (caltreat-ap-channel also turns it off when the driver turns it back on)
+wifi.powersave=2
 EOF
 
 # ---------------------------------------------------------------- 3. names
@@ -370,13 +383,30 @@ addn-hosts=/etc/caltreat/hosts
 localise-queries
 EOF
 
+# ---------------------------------------------------------------- 4. sound priority
+say "Sound priority for the app (user $APP_USER)"
+if [[ -n "$PRIO_FILE" ]]; then
+  put_file "$PRIO_FILE" 644 <<'EOF'
+# Installed by Caltreat's pi/setup/network.sh: the Caltreat app (a user service) may give its sound threads, aplay
+# and the sound engine a higher priority (nice -10) than its web pages, so a busy page doesn't make the sound stutter.
+[Service]
+LimitNICE=-10
+EOF
+else
+  warn "no user \"$APP_USER\": run this with sudo from the app's user (or set APP_USER) for the sound priority"
+fi
+
 # ---------------------------------------------------------------- apply
 say "Applying"
 if [[ -n "$ROOT" && -z "${CALTREAT_SETUP_APPLY:-}" ]]; then
   note "(CALTREAT_SETUP_ROOT is set: files only, nothing started)"
 else
-  if changed "$UNITS/caltreat-uap0.service" "$UNITS/caltreat-ap-channel.service" "$UNITS/caltreat-ap-channel.timer" "$SBIN/caltreat-uap0"; then
+  if changed "$UNITS/caltreat-uap0.service" "$UNITS/caltreat-ap-channel.service" "$UNITS/caltreat-ap-channel.timer" \
+    "$SBIN/caltreat-uap0" ${PRIO_FILE:+"$PRIO_FILE"}; then
     run systemctl daemon-reload
+  fi
+  if [[ -n "$PRIO_FILE" ]] && changed "$PRIO_FILE"; then
+    note "The sound priority takes effect after a reboot (sudo reboot)."
   fi
   if ((SHARED_RADIO)); then
     systemctl is-enabled --quiet caltreat-uap0.service 2>/dev/null || run systemctl enable caltreat-uap0.service

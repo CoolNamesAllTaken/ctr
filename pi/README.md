@@ -130,7 +130,29 @@ cd ~/caltreat
 poetry run python -m caltreat
 ```
 
-### Stutters, frozen pages, lost Wi-Fi: `tools/diagnose.sh`
+### Stutters, frozen pages, lost Wi-Fi
+
+**Settings → Health** shows the Pi's CPU, temperature and power (undervoltage /
+throttling), the web side's event loop lag (and where it was stuck last), each
+sound card's gaps / underruns, the sound engine's render speed and Wi-Fi drops.
+The log has a line for each event loop freeze over 200 ms
+(`caltreat: event loop blocked 850 ms ... in file.py:123 function`) and for
+sound card underruns: `journalctl --user-unit caltreat | grep -E 'blocked|underrun'`.
+
+- **Power**: a Pi 4 needs the official 5.1 V 3 A supply; the USB sound cards
+  draw from it too. "undervoltage" on the Health panel (or a ⚠ from
+  diagnose.sh) means a weaker supply or a long / thin cable: expect sound
+  glitches, USB resets and Wi-Fi drops until it's replaced.
+- **Sound priority**: the app runs its sound threads, aplay and the sound
+  engine at nice -10 (the pages at 0) once `sudo ~/caltreat/setup/network.sh`
+  has allowed it (`LimitNICE` for the app user's services) and the Pi has
+  rebooted. Without it the log says "can't give the sound a higher priority".
+- **Buffer**: each card holds 60 ms (`CALTREAT_ALSA_BUFFER_MS`). If the Health
+  panel keeps showing underruns, 80-100 rides out more (add
+  `Environment=CALTREAT_ALSA_BUFFER_MS=80` to `caltreat.service`) at the cost
+  of the intercom running ~160 ms late.
+
+#### `tools/diagnose.sh`
 
 Run it on the Pi while the problem happens (keep playing sounds and using the
 pages for the few minutes it runs). No sudo needed. It writes one file to send
@@ -243,7 +265,21 @@ mDNS, and on Caltreat Cab also by its DNS for phones without mDNS.
 Settings → Network shows both Wi-Fis, the wired network and the ports.
 
 A USB Wi-Fi adapter for the access point is more robust (its own radio, any
-channel): plug it in and run the setup with `AP_IFACE=wlan1`.
+channel): plug it in and run the setup with `AP_IFACE=wlan1`. With the built-in
+Wi-Fi doing both, the one radio is shared: client and access point must sit on
+the same channel, throughput is roughly halved, and every scan or roam of
+wlan0 (NetworkManager scans more when the signal is weak) briefly takes the
+radio away from the phones. When wlan0 joins on another channel the access
+point has to move, which drops every phone for a few seconds.
+
+The channel helper (`caltreat-ap-channel`, every minute and on wlan0 up/down)
+restarts the access point only when it must move: never while it is up on the
+right channel. While wlan0 isn't joined it moves only when the network has
+been seen on the same channel twice in a row, at most every 5 minutes, so a
+flickering Wi-Fi doesn't drop the phones every minute. It also turns Wi-Fi
+power saving off on wlan0 and uap0 (power saving makes the brcmfmac driver drop
+frames and adds latency spikes); NetworkManager is told the same
+(`wifi.powersave=2`).
 
 Troubleshooting on the Pi:
 

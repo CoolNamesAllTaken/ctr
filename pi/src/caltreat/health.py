@@ -32,6 +32,36 @@ def log(msg):
     print(f"caltreat: {msg}", file=sys.stderr, flush=True)
 
 
+SOUND_NICE = int(os.environ.get("CALTREAT_SOUND_NICE", "-10"))  # the sound threads and processes; the web side stays 0
+_prio = {"ok": None}
+
+
+def raise_priority(*ids):
+    """Give threads / processes (Linux task ids) the sound's priority (nice SOUND_NICE), so a busy web side or a
+    burst of other work doesn't starve them. Needs the user's nice limit (pi/setup/network.sh sets it: LimitNICE
+    for the caltreat user's services); without it this does nothing and says so once."""
+    for i in ids:
+        try:
+            os.setpriority(os.PRIO_PROCESS, i, SOUND_NICE)
+            _prio["ok"] = True
+        except OSError as e:
+            if _prio["ok"] is None:
+                _prio["ok"] = False
+                log(f"can't give the sound a higher priority ({e.strerror}): run sudo ~/caltreat/setup/network.sh "
+                    "once (it allows it) and reboot")
+            return False
+    return True
+
+
+def raise_process_priority(pid):
+    """All threads of a process (node's engine workers)."""
+    try:
+        tids = [int(t) for t in os.listdir(f"/proc/{pid}/task")]
+    except OSError:
+        tids = [pid]
+    return raise_priority(*tids)
+
+
 class Limiter:
     """At most one log line per key every WARN_EVERY s; the lines in between are counted into the next one."""
 
@@ -223,4 +253,5 @@ class Monitor:
 
     def snapshot(self):
         return {"loop_lag_ms": round(self.lag_ms, 1), "loop_lag_max_ms": round(self.lag_max_ms, 1),
+                "sound_priority": _prio["ok"],
                 "loop_lag_events": self.lag_events, "loop_last_block": self.last_block, **self.sys, **self.audio}

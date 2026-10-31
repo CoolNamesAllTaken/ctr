@@ -70,6 +70,7 @@ class Sidecar:
         self.started = 0.0
         self.restarts = 0
         self.late = 0  # blocks not ready in time
+        self.on_ready = None  # fn(pid) when the engine is ready
         self.perf = {}  # bus -> {"avgMs", "maxMs", "blockMs"}: render time per block, from the engine once a second
         self.replay = {}  # key -> message, sent again to a restarted engine
         self.wlock = threading.Lock()
@@ -131,6 +132,8 @@ class Sidecar:
                     continue
                 if m.get("ready"):
                     self.ready, self.error, self.warm_ms = True, None, m.get("warmMs")
+                    if self.on_ready:
+                        self.on_ready(p.pid)  # its worker threads all exist now: give them the sound's priority
                     print(f"caltreat: v12 engine ready (warm-up {self.warm_ms} ms)", file=sys.stderr)
                 elif "perf" in m:
                     self.perf[m["perf"].get("bus")] = m["perf"]

@@ -18,9 +18,12 @@ JACK = "jack"  # the 3.5 mm jack (ALSA card Headphones)
 JACK_CARD = "Headphones"
 JACK_MIXER = "PCM"
 USB_MIXER = "Speaker"  # the C-Media USB cards' playback volume
-# ALSA buffer per card: what sounds play late by (with ~30 ms of queue and pipe on top). Raise it if the log shows
-# underruns ("aplay ... underrun"); the intercom aims at < 150 ms from the phone's microphone.
-BUFFER_MS = int(os.environ.get("CALTREAT_ALSA_BUFFER_MS", "40"))
+# ALSA buffer per card: what sounds play late by (with ~30 ms of queue and pipe on top), and how long the app may
+# stall before a card runs dry. 60 ms (was 40): the cards ride out a short busy spell of the web side (the players
+# wait up to 60% of it for a late block instead of playing silence). 80-100 ms rides out more, if the Health panel
+# still shows underruns (CALTREAT_ALSA_BUFFER_MS in the service), but the intercom (which aims at < 150 ms from the
+# phone's microphone) then runs ~160 ms late.
+BUFFER_MS = int(os.environ.get("CALTREAT_ALSA_BUFFER_MS", "60"))
 
 FAKE = os.environ.get("CALTREAT_FAKE_AUDIO") or (None if shutil.which("aplay") else "1")
 FAKE_DIR = FAKE if FAKE and os.path.isdir(FAKE) else None
