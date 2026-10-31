@@ -70,10 +70,12 @@ def defaults():
         "env": {"front": "dry", "rear": "dry"},  # outside sound per speaker (INSIDE is always inside the car)
         "timing": "costume",
         "depart_horn": True,
+        # device / ch: where the speaker plays. device2 / ch2: a second card and channel playing the same mix, e.g.
+        # INSIDE in two cars, each with its own sound card ("none" = no second output).
         "speakers": {
-            "front": {"device": "jack", "ch": "both", "level": 100},
-            "inside": {"device": "usb#1", "ch": "both", "level": 100},
-            "rear": {"device": "none", "ch": "both", "level": 100},
+            "front": {"device": "jack", "ch": "both", "device2": "none", "ch2": "both", "level": 100},
+            "inside": {"device": "usb#1", "ch": "both", "device2": "none", "ch2": "both", "level": 100},
+            "rear": {"device": "none", "ch": "both", "device2": "none", "ch2": "both", "level": 100},
         },
         "volumes": {},  # ALSA card volume % by device ("jack", "usb:1.2"); unset = leave as it is
         "intercom": {"mic_gain_db": 0, "level": 80, "duck_db": -18, "timeout_s": 60},
@@ -150,6 +152,10 @@ def validate(c):
                 errs.append(f"speakers.{k}.device: not jack, none, usb#N or usb:<port>")
             if s.get("ch", "both") not in CHANNELS:
                 errs.append(f"speakers.{k}.ch: one of {', '.join(CHANNELS)}")
+            if not isinstance(s.get("device2", "none"), str) or not DEVICE_RE.match(s.get("device2", "none")):
+                errs.append(f"speakers.{k}.device2: not jack, none, usb#N or usb:<port>")
+            if s.get("ch2", "both") not in CHANNELS:
+                errs.append(f"speakers.{k}.ch2: one of {', '.join(CHANNELS)}")
             if not _num(s.get("level", 100), 0, 100):
                 errs.append(f"speakers.{k}.level: not 0-100")
     vol = c.get("volumes", {})

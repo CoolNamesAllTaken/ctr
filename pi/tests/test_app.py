@@ -145,6 +145,44 @@ def test_speaker_test_tone_on_one_channel(running):
     assert np.fft.rfftfreq(len(right), 1 / 48000)[np.argmax(s)] == pytest.approx(440, abs=3)
 
 
+def test_a_speaker_on_a_second_card(running):
+    """INSIDE in two cars, a card in each: the same mix also plays on a second card's channel (here the free right
+    side of REAR's card), and the first card still paces INSIDE."""
+    s = m.cfg.data["speakers"]["inside"]
+    s.update(device2="usb#1", ch2="right")
+    m.cfg.save()
+    try:
+        assert wait_for(lambda: m.router.status["inside"].get("also", {}).get("card") == "Device")
+        assert m.router.status["inside"]["key"] == "usb:1.3"
+        time.sleep(0.3)
+        m.audio.hold("test", True)
+        time.sleep(1.0)
+        m.audio.hold("test", False)
+        time.sleep(0.6)
+        n = 2 * 48000  # the last 2 s: the horn and a little before it
+        first, _ = latest("usb-1.3")
+        second, _ = latest("usb-1.2")
+        a = rms(first[-n:, 1])
+        assert a > 0.005 and rms(second[-n:, 1]) == pytest.approx(a, rel=0.1)
+        assert rms(second[-n:, 0]) > 0.0  # REAR is still on the left
+    finally:
+        s.update(device2="none", ch2="both")
+        m.cfg.save()
+    assert wait_for(lambda: m.router.status["inside"]["also"]["ok"] is None)
+
+
+def test_second_output_on_the_same_card_is_not_added_twice(running):
+    s = m.cfg.data["speakers"]["inside"]
+    s.update(device2="usb:1.3", ch2="both")  # overlaps the first output (usb:1.3 right)
+    m.cfg.save()
+    try:
+        assert wait_for(lambda: m.router.status["inside"].get("also", {}).get("key") == "usb:1.3")
+        assert [o for o in m.router.plan["usb:1.3"]["outs"] if o[0] == "inside"] == [("inside", (1.0, 1.0), 1.0)]
+    finally:
+        s.update(device2="none", ch2="both")
+        m.cfg.save()
+
+
 @pytest.fixture(scope="module")
 def board():
     b = FakeBoard("127.0.1.10", int(os.environ["CALTREAT_BOARD_PORT"]), uid=UID).start()

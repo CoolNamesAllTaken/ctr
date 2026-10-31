@@ -15,7 +15,8 @@ def test_round_trip(tmp_path):
     cfg = Config.load(tmp_path)
     assert cfg.error is None and not cfg.path.exists()  # no file yet: defaults, nothing written
     cfg.data["mix"]["horn"] = 90
-    cfg.data["speakers"]["inside"] = {"device": "usb:1.3", "ch": "right", "level": 70}
+    cfg.data["speakers"]["inside"] = {"device": "usb:1.3", "ch": "right", "device2": "usb#2", "ch2": "left",
+                                      "level": 70}
     cfg.data["functions"].append({"id": "smoke", "name": "Smoke", "kind": "manual", "symbol": "●"})
     cfg.data["relay"][3] = {"fn": "smoke", "alt": False}
     cfg.save()
@@ -41,6 +42,14 @@ def test_partial_and_old_files_get_defaults():
     assert {f["id"] for f in new["functions"]} >= {"head", "markers", "doors"}
 
 
+def test_speakers_from_before_the_second_output_get_none():
+    old = {"version": 1, "speakers": {"inside": {"device": "usb:1.3", "ch": "right", "level": 70}}}
+    new, errs = parse(json.dumps(old))
+    assert errs == []
+    assert new["speakers"]["inside"] == {"device": "usb:1.3", "ch": "right", "device2": "none", "ch2": "both",
+                                         "level": 70}
+
+
 @pytest.mark.parametrize("bad, words", [
     ("not json", "not JSON"),
     ("[]", "not a JSON object"),
@@ -51,6 +60,9 @@ def test_partial_and_old_files_get_defaults():
     ({"version": 1, "speakers": {"front": {"device": "usb:../../etc", "ch": "both", "level": 1}}}, "device"),
     ({"version": 1, "speakers": {"attic": {"device": "jack"}}}, "speakers.attic"),
     ({"version": 1, "speakers": {"rear": {"device": "jack", "ch": "middle"}}}, "speakers.rear.ch"),
+    ({"version": 1, "speakers": {"inside": {"device": "jack", "device2": "usb:../../etc"}}}, "speakers.inside.device2"),
+    ({"version": 1, "speakers": {"inside": {"device": "jack", "device2": 3}}}, "speakers.inside.device2"),
+    ({"version": 1, "speakers": {"inside": {"device": "jack", "ch2": "middle"}}}, "speakers.inside.ch2"),
     ({"version": 1, "relay": [{"fn": "head"}]}, "relay"),
     ({"version": 1, "relay": [{"fn": "laser"}, {}, {}, {}]}, "unknown function"),
     ({"version": 1, "functions": [{"id": "Bad Id!", "name": "x"}]}, "functions[0].id"),

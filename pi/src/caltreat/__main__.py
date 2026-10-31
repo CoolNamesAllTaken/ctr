@@ -1801,14 +1801,21 @@ class Router:
         plan, status = {}, {}
         for sp in SPEAKERS:
             s = self.cfg.data["speakers"][sp]
-            card, desc = hw.resolve(s["device"], usb)
-            key = None
-            if card:
-                key = hw.JACK if card == hw.JACK_CARD else "usb:" + next(p for c, p in usb if c == card)
-                plan.setdefault(key, {"card": card, "outs": []})["outs"].append(
-                    (sp, _mask(s["ch"]), s["level"] / 100))
-            status[sp] = {"device": s["device"], "key": key, "card": card, "desc": desc,
-                          "ok": None if s["device"] == "none" else card is not None}
+            # Its output and optional second output (device2 / ch2: e.g. INSIDE in two cars, a card in each). Two
+            # outputs on one card merge into one channel mask, so the mix is never added to a channel twice.
+            outs, st = {}, []
+            for dev, ch in ((s["device"], s["ch"]), (s.get("device2", "none"), s.get("ch2", "both"))):
+                card, desc = hw.resolve(dev, usb)
+                key = None
+                if card:
+                    key = hw.JACK if card == hw.JACK_CARD else "usb:" + next(p for c, p in usb if c == card)
+                    old, new = outs.get(key, (card, (0.0, 0.0)))[1], _mask(ch)
+                    outs[key] = (card, (max(old[0], new[0]), max(old[1], new[1])))
+                st.append({"device": dev, "key": key, "card": card, "desc": desc,
+                           "ok": None if dev == "none" else card is not None})
+            for key, (card, mask) in outs.items():
+                plan.setdefault(key, {"card": card, "outs": []})["outs"].append((sp, mask, s["level"] / 100))
+            status[sp] = {**st[0], "also": st[1]}  # the first output's card paces INSIDE (see _run)
         if self.test:
             card, _ = hw.resolve(self.test[0], usb)
             if card:
@@ -2833,6 +2840,12 @@ def device_options():
 CH_LABEL = {"both": "L+R", "left": "L", "right": "R"}
 SPK = {"front": ("Front", "Outside, front cab"), "inside": ("Inside", "Passengers + the intercom"),
        "rear": ("Rear", "Outside, back")}
+
+
+def speaker_output(sp, n=1):
+    """(device, channel) of a speaker's first (n=1) or second (n=2) output in the config."""
+    s = cfg.data["speakers"][sp]
+    return (s["device"], s["ch"]) if n == 1 else (s.get("device2", "none"), s.get("ch2", "both"))
 KIND_LABEL = {"manual": "manual (engineer page)", "doors": "doors open / moving", "crossing": "crossing signal",
               "horn": "while the horn sounds", "bell": "while the bell rings"}
 
@@ -3074,18 +3087,31 @@ async def settings(client):
                                        lambda v, sp=sp: (d["speakers"][sp].__setitem__("ch", v), save()),
                                        "Channel", "sel narrow")
                                 tb = sbtn("▶", lambda sp=sp: test_speaker(sp), "Test tone on this speaker")
+                            # a second card and channel with the same mix (e.g. INSIDE in two cars)
+                            with el("div", "nm", title="Also on: a second sound card and channel playing the same "
+                                                       "mix, e.g. the inside speaker of a second car"):
+                                st2 = ui.html("", sanitize=False, tag="small")
+                            with el("div", "ctlz"):
+                                select(device_options(), s.get("device2", "none"),
+                                       lambda v, sp=sp: (d["speakers"][sp].__setitem__("device2", v), save()),
+                                       "Also on this sound card (— none: only the one above)")
+                                select([(c, CH_LABEL[c]) for c in CHANNELS], s.get("ch2", "both"),
+                                       lambda v, sp=sp: (d["speakers"][sp].__setitem__("ch2", v), save()),
+                                       "Channel", "sel narrow")
+                                tb2 = sbtn("▶", lambda sp=sp: test_speaker(sp, 2), "Test tone on the second output")
                             slider("Level", 0, 100, s["level"],
                                    lambda v, sp=sp: (d["speakers"][sp].__setitem__("level", v), save()))
 
-                            def show(st=st, tb=tb, sp=sp):
+                            def show(st=st, st2=st2, tb=tb, tb2=tb2, sp=sp):
                                 r = router.status.get(sp, {})
-                                ok = r.get("ok")
-                                txt = "—" if ok is None else (f"✓ {r.get('card')}" if ok else f"✗ {r.get('desc')}")
-                                st.set_content(_esc(txt))
-                                st.classes(replace="bad" if ok is False else "")
-                                on = router.test is not None and router.test[0] == d["speakers"][sp]["device"] \
-                                    and router.test[1] == d["speakers"][sp]["ch"]
-                                tb.classes(replace="sbtn on" if on else "sbtn")
+                                for txt_el, btn, out, n, label in ((st, tb, r, 1, ""),
+                                                                   (st2, tb2, r.get("also", {}), 2, "also ")):
+                                    ok = out.get("ok")
+                                    txt = "—" if ok is None else (f"✓ {out.get('card')}" if ok else f"✗ {out.get('desc')}")
+                                    txt_el.set_content(_esc(label + txt))
+                                    txt_el.classes(replace="bad" if ok is False else "")
+                                    on = router.test is not None and router.test == speaker_output(sp, n)
+                                    btn.classes(replace="sbtn on" if on else "sbtn")
                             live.append(show)
                 el("h2", "", "Card volume", "The sound cards' own volume (ALSA mixer); kept in the settings")
                 usb = hw.usb_outputs()
@@ -3251,10 +3277,10 @@ async def settings(client):
             errs = ui.html("", sanitize=False, tag="div").classes("errs full")
             live.append(lambda: errs.set_content(_esc(errors())))
 
-    def test_speaker(sp):
-        s = cfg.data["speakers"][sp]
-        on = router.test == (s["device"], s["ch"])
-        router.set_test(None if on or s["device"] == "none" else s["device"], s["ch"])
+    def test_speaker(sp, n=1):
+        dev, ch = speaker_output(sp, n)
+        on = router.test == (dev, ch)
+        router.set_test(None if on or dev == "none" else dev, ch)
 
     def raw_test(dev, ch):
         router.set_test(None if router.test == (dev, ch) else dev, ch)
