@@ -13,6 +13,7 @@ import copy
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
 from pathlib import Path
@@ -200,7 +201,7 @@ def complete(c):
     for o in out["relay"]:
         o.setdefault("fn", None)
         o.setdefault("alt", False)
-    for uid, b in out["boards"].items():
+    for b in out["boards"].values():
         b.setdefault("outputs", board_defaults(b.get("name", "?"))["outputs"])
         for o in b["outputs"]:
             o.setdefault("fn", None)
@@ -236,7 +237,7 @@ def diff(old, new, path=""):
             else:
                 out += diff(old[k], new[k], p)
     elif isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
-        for i, (a, b) in enumerate(zip(old, new)):
+        for i, (a, b) in enumerate(zip(old, new, strict=True)):
             out += diff(a, b, f"{path}[{i}]")
     elif old != new:
         out.append(f"{path}: {json.dumps(old, ensure_ascii=False)[:60]} -> {json.dumps(new, ensure_ascii=False)[:60]}")
@@ -276,7 +277,19 @@ class Config:
                 cfg.data = complete(raw)
         elif cfg.error is None:
             cfg._migrate()
+        if cfg.error:
+            cfg._keep_bad()
         return cfg
+
+    def _keep_bad(self):
+        """The next save() replaces the file the app couldn't use (one from a newer version, a bad hand edit):
+        keep a copy (config.json.bad) so those settings can still be restored."""
+        bad = self.path.with_name(FILE + ".bad")
+        try:
+            shutil.copy2(self.path, bad)
+            self.error += f" (the file is kept as {bad})"
+        except OSError:
+            pass
 
     def _migrate(self):
         """First start: take the board names from the old boards.json (chip ID -> name)."""
