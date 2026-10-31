@@ -24,3 +24,24 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Chart colours for the employee Live tab. Series 1-2 are checked for
+   colour-blind separation and contrast against this page's own backgrounds
+   (#ffffff and #0a0a0a); the dark steps are their own, not a flip. Status
+   colours always come with a text label, never on their own. */
+.viz {
+  --viz-series-1: #2a78d6;
+  --viz-series-2: #eb6834;
+  --viz-grid: #e1e0d9;
+  --viz-axis: #c3c2b7;
+  --viz-warning: #fab219;
+}
+
+@media (prefers-color-scheme: dark) {
+  .viz {
+    --viz-series-1: #3987e5;
+    --viz-series-2: #d95926;
+    --viz-grid: #2c2c2a;
+    --viz-axis: #383835;
+  }
+}
