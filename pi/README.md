@@ -254,8 +254,13 @@ and a level. "USB #1" means the first USB sound card by USB port, "USB port
 1.3" one exact socket (port paths stay the same across reboots; ALSA's card
 names like `Device_1` don't). The row shows ✓ and the ALSA card when it is
 plugged in, ✗ when it isn't. ▶ plays a 440 Hz test tone on that speaker;
-**Channel test** plays it on one channel of any card. **Card volume** is
-each card's own mixer volume. Defaults: FRONT = the jack, INSIDE = USB #1
+**Channel test** plays it on one channel of any card. Level goes up to
+400 % (+12 dB); loud parts are then softly limited, not clipped. **Card
+volume** is each card's own mixer volume in dB (0 dB = full scale, the
+default). **Trim** is extra gain per card so the same level sounds the same
+on any card: the 3.5 mm jack's full scale is about 9 dB below a USB DAC's,
+so its trim starts at +9 dB. That is an estimate; set it by ear (play the
+same sound on the jack and a USB speaker and match them). Defaults: FRONT = the jack, INSIDE = USB #1
 (both channels), REAR = none.
 
 Each speaker plays its own v12 mix (see "Sounds"). Front / Rear env under Settings → Sound sets what the outside
