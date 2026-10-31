@@ -4,6 +4,10 @@
 #   pi/deploy.sh            deploy origin/main (fetched first)
 #   pi/deploy.sh <ref>      deploy a branch, tag or commit
 #   pi/deploy.sh --local    deploy pi/ as it is in your working tree
+#   ... --with-lc-firmware <firmware.bin | build>
+#                           also deploy a lighting controller image for the settings page's firmware
+#                           updates ("build": PlatformIO build of firmware/ in your working tree). Without it,
+#                           the image deployed last time stays.
 #
 # Your computer must be on the same network as the Pi. Set CALTREAT_HOST to
 # use a different address (default: caltreat@caltreat.local). See README.md.
@@ -20,6 +24,16 @@ trap 'ssh -o ControlPath="$SOCK" -O exit "$HOST" 2>/dev/null || true; rm -rf "$S
 # One SSH connection for the whole deploy, so a password is asked for at most once.
 SSH=(ssh -o ControlMaster=auto -o ControlPath="$SOCK" -o ControlPersist=60 -o ConnectTimeout=10)
 
+LC_FW=""
+ARGS=()
+while (($#)); do
+  case "$1" in
+    --with-lc-firmware) LC_FW="${2:?--with-lc-firmware needs an image path or build}"; shift 2 ;;
+    *) ARGS+=("$1"); shift ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
 if [[ "${1:-}" == "--local" ]]; then
   echo "==> Staging pi/ from your working tree"
   rsync -a --exclude .venv --exclude __pycache__ "$REPO/pi/" "$STAGE/pi/"
@@ -33,6 +47,21 @@ else
   git -C "$REPO" archive "$REF" pi | tar -x -C "$STAGE"
   VERSION="$(git -C "$REPO" rev-parse --short "$REF^{commit}")"
 fi
+KEEP_LC_FW=(--filter "P /lc-firmware/")  # rsync --delete keeps the image deployed last time
+if [[ -n "$LC_FW" ]]; then
+  if [[ "$LC_FW" == build ]]; then
+    FW_DIR="$REPO/firmware/caltreat_lighting_controller"
+    PIO="$(command -v pio || echo "$HOME/.platformio/penv/bin/pio")"
+    echo "==> Building the lighting controller firmware ($FW_DIR)"
+    (cd "$FW_DIR" && "$PIO" run -s -e app)
+    LC_FW="$FW_DIR/.pio/build/app/firmware.bin"
+  fi
+  mkdir -p "$STAGE/pi/lc-firmware"
+  cp "$LC_FW" "$STAGE/pi/lc-firmware/lighting-controller.bin"
+  LC_VER="$(PYTHONPATH="$STAGE/pi/src" python3 -c 'import sys; from caltreat.lcctl import image; print(image.load(sys.argv[1]).version_str)' "$STAGE/pi/lc-firmware/lighting-controller.bin")"
+  echo "==> Lighting controller firmware $LC_VER from $LC_FW"
+  KEEP_LC_FW=()
+fi
 echo "$VERSION deployed $(date '+%Y-%m-%d %H:%M:%S') from $(hostname -s)" > "$STAGE/pi/DEPLOYED_VERSION"
 
 echo "==> Connecting to $HOST"
@@ -40,7 +69,7 @@ echo "==> Connecting to $HOST"
 
 echo "==> Copying files"
 # --delete keeps ~/caltreat identical to the repo, apart from the virtualenv.
-rsync -a --delete --exclude .venv --exclude __pycache__ \
+rsync -a --delete --exclude .venv --exclude __pycache__ "${KEEP_LC_FW[@]+"${KEEP_LC_FW[@]}"}" \
   -e "${SSH[*]}" "$STAGE/pi/" "$HOST:caltreat/"
 
 echo "==> Installing dependencies (if changed) and restarting"

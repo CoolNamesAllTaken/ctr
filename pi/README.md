@@ -235,6 +235,27 @@ poetry run pip install pytest
 poetry run pytest
 ```
 
+## Lighting controller firmware
+
+Settings → Lighting controllers → Firmware shows each board's firmware and
+register map version (⚠ when it isn't the chosen image) and updates boards
+over the network: ⤓ for one board, ⤓ All for every board not on the image.
+A board's lights go off while it updates, and the engineer page shows it as
+unavailable. A failed update leaves the old firmware running.
+
+The image is the one deployed with the app, or one uploaded on the page
+(`.pio/build/app/firmware.bin`). To deploy one, so updates work offline:
+
+```sh
+pi/deploy.sh --with-lc-firmware path/to/firmware.bin   # or: --with-lc-firmware build (needs PlatformIO)
+```
+
+It goes to `~/caltreat/lc-firmware/` (not in the repo) and stays there on
+later deploys until you deploy another. Boards refuse an older image unless ↓
+is on, and refuse the version they already run. The update code is lcctl's
+([`firmware/caltreat_lighting_controller/tools`](../firmware/caltreat_lighting_controller/tools)),
+copied into `src/caltreat/lcctl/`; a test fails when the copies differ.
+
 ## Setting up a new Pi
 
 1. Flash Raspberry Pi OS (64-bit) with hostname `caltreat` and user `caltreat`.
