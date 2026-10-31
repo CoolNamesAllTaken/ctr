@@ -1019,6 +1019,7 @@ Everything configurable is in one JSON file (config.py), which the settings page
 """
 
 import asyncio
+import collections
 import contextlib
 import fcntl
 import json
@@ -1638,7 +1639,7 @@ class Device:
     restarting it if the card goes away. A missing block is played as silence; extra blocks (clock drift between
     cards) are dropped, so a slow or missing card never holds up the others."""
 
-    QUEUE = 2  # blocks kept ahead (~21 ms)
+    QUEUE = 1  # blocks kept ahead (~11 ms), on top of the pipe (~21 ms) and the ALSA buffer
 
     def __init__(self, key, card):
         self.key, self.card = key, card  # config device ("jack", "usb:1.2"), ALSA card id
@@ -1648,14 +1649,19 @@ class Device:
         self.ok = False
         self.error = None
         self.underruns = 0
+        self.dropped = 0
+        self.blocks = 0  # blocks written to the current player
+        self.written = collections.deque(maxlen=6000)  # (engine sample clock, block index), fake-audio runs only
         self.thread = threading.Thread(target=self._run, name=f"caltreat-out-{key}", daemon=True)
         self.thread.start()
 
-    def push(self, frames):
+    def push(self, frames, t=None):
         with self.cond:
-            self.q.append(frames)
-            if len(self.q) > self.QUEUE + 2:
+            self.q.append((frames, t))
+            if len(self.q) > self.QUEUE + 1:  # a card behind the pacing one (clock drift, start-up)
                 del self.q[0]
+                self.dropped += 1
+                self.dropped += 1
             self.cond.notify_all()
 
     def wait_room(self, timeout):
@@ -1671,11 +1677,14 @@ class Device:
     def _pop(self):
         with self.cond:
             self.cond.wait_for(lambda: self.q or not self.running, 0.03)
-            frames = self.q.pop(0) if self.q else None
+            frames, t = self.q.pop(0) if self.q else (None, None)
             self.cond.notify_all()
         if frames is None:
             self.underruns += 1
             frames = np.zeros((BLOCK, 2))
+        elif hw.FAKE_DIR:
+            self.written.append((t, self.blocks))  # engine sample clock -> block in the recording (tests)
+        self.blocks += 1
         return (np.clip(frames, -1, 1) * 32767).astype("<i2").tobytes()
 
     def _run(self):
@@ -1692,9 +1701,13 @@ class Device:
             except OSError:
                 pass
             err = ""
+            self.blocks = 0
+            self.written.clear()
             try:
                 while self.running:
-                    proc.stdin.write(self._pop())
+                    data = memoryview(self._pop())
+                    while data:  # unbuffered pipe: a write may (rarely) be partial
+                        data = data[proc.stdin.write(data):]
                     self.ok, self.error = True, None
             except (BrokenPipeError, OSError):
                 pass
@@ -1719,7 +1732,7 @@ class Router:
     """Renders the engine and plays it on the speakers in the config: FRONT, INSIDE and REAR each map to a sound
     card (the jack or a USB card, by port) and a channel (left, right or both), with a level. The engine is one mono
     mix (the same on every speaker); INSIDE also gets the intercom, with the train sounds ducked while someone talks.
-    The speaker test tone plays on any card and channel. The jack, or else the first card in use, sets the pace;
+    The speaker test tone plays on any card and channel. INSIDE's card (or the jack, or any) sets the pace;
     with no card at all the engine still runs on the clock (so the train keeps moving and sequences keep going)."""
 
     TEST_FREQ = 440.0
@@ -1817,7 +1830,8 @@ class Router:
                     self.error = f"speaker plan: {e}"
                     print(f"caltreat: {self.error}", file=sys.stderr)
             y = self.audio.render()
-            ic = self.intercom.pull(BLOCK)
+            t_block = self.audio.t - BLOCK
+            ic = self.intercom.pull(BLOCK, t_block)
             duck_to = self.intercom.duck()
             g = self.duck + (duck_to - self.duck) * np.minimum((np.arange(BLOCK) + 1) / (0.03 * SR), 1.0)
             self.duck = float(g[-1])
@@ -1837,8 +1851,10 @@ class Router:
                     frames[:, 1] += tone * test_mask[1]
                 dev = self.devices.get(key)
                 if dev:
-                    dev.push(frames)
-            master = self.devices.get(hw.JACK) or next(iter(self.devices.values()), None)
+                    dev.push(frames, t_block)
+            # pace by the inside speaker's card (lowest latency for the intercom), else the jack, else any
+            inside = self.status.get("inside", {}).get("key")
+            master = self.devices.get(inside) or self.devices.get(hw.JACK) or next(iter(self.devices.values()), None)
             if master is not None and master.ok:
                 master.wait_room(0.1)
                 clock = time.monotonic()
@@ -2421,6 +2437,9 @@ def intercom_api():
     out = {"talking": intercom.talking, "stats": intercom.stats, "duck": router.duck}
     if hw.FAKE_DIR:
         out["marks"] = intercom.marks[-2000:]
+        out["t0"] = intercom.t0
+        out["devices"] = {k: {"written": list(d.written), "underruns": d.underruns, "dropped": d.dropped}
+                          for k, d in router.devices.items()}
     return out
 
 

@@ -1,10 +1,11 @@
 """Push-to-talk intercom: a phone's microphone, streamed over a WebSocket, played on the INSIDE speakers.
 
 The page captures 16 kHz mono with an AudioWorklet (echo cancellation, noise suppression and auto gain on) and sends
-20 ms frames: a 12-byte header (uint32 sequence number, float64 capture time in ms since the epoch, little endian)
-and 320 int16 samples. One talker at a time: `claim()` fails while someone else talks. The output side calls
-`pull(n)` for n samples at 48 kHz from the audio thread: a small jitter buffer (40 ms before it starts, kept under
-MAX_MS by dropping the oldest audio) upsampled x3. Talking stops on release, on a disconnect, when no frames come
+10 ms frames: a 12-byte header (uint32 sequence number, float64 capture time in ms since the epoch, little endian)
+and 160 int16 samples. One talker at a time: `claim()` fails while someone else talks. The output side calls
+`pull(n)` for n samples at 48 kHz from the audio thread: a small jitter buffer (PREBUF_MS before it starts, kept under
+MAX_MS by dropping the oldest audio) upsampled x3. The buffer starts small and grows by
+PREBUF_STEP ms each time it runs dry (Wi-Fi jitter), so a good network gets the lowest latency. Talking stops on release, on a disconnect, when no frames come
 for STALE s, or after the timeout.
 """
 
@@ -17,9 +18,11 @@ import numpy as np
 IN_RATE = 16000
 OUT_RATE = 48000
 UP = OUT_RATE // IN_RATE
-FRAME = 320  # 20 ms
+FRAME = 160  # 10 ms
 HEADER = struct.Struct("<Id")
-PREBUF_MS = 40
+PREBUF_MS = 20  # start playing at the first frame; each underrun during a talk adds PREBUF_STEP, up to PREBUF_MAX
+PREBUF_STEP = 10
+PREBUF_MAX = 60
 MAX_MS = 200
 TARGET_MS = 80  # what an overfull buffer is cut back to
 STALE = 1.5  # s without frames = the talker is gone
@@ -59,14 +62,16 @@ class Intercom:
         self.buf = np.zeros(0, dtype=np.float32)  # 16 kHz samples waiting
         self.out = np.zeros(0)  # upsampled, not yet pulled
         self.playing = False  # False while (re)filling the jitter buffer
+        self.prebuf = PREBUF_MS
         self.up = Upsampler()
         self.level = 0.0  # input RMS of the last frame, 0..1
         self.stats = {}
-        self.marks = []  # (output sample index, capture time ms, n): where frames start in the pulled stream (tests)
+        self.marks = []  # (output sample index, capture time ms, n, arrival ms, pulled ms): where frames start in the pulled stream (tests)
         self.pending = []  # (input sample index, capture time ms, n) of frames not yet upsampled
         self.fed = 0  # input index of the next sample fed
         self.consumed = 0  # input index of buf[0]
         self.pulled = 0  # samples pulled since the talk started
+        self.t0 = None  # output sample clock of the talk's first pulled sample
         self.keep_marks = False
         self._reset_stats()
 
@@ -84,6 +89,7 @@ class Intercom:
             self.buf = np.zeros(0, dtype=np.float32)
             self.out = np.zeros(0)
             self.playing = False
+            self.prebuf = PREBUF_MS
             self.up = Upsampler()
             self.pulled = self.fed = self.consumed = 0
             self.marks, self.pending = [], []
@@ -132,7 +138,7 @@ class Intercom:
             self.stats["frames"] += 1
             self.level = float(np.sqrt(np.mean(pcm ** 2))) if len(pcm) else 0.0
             if self.keep_marks:
-                self.pending.append((self.fed, t_ms, len(pcm)))
+                self.pending.append((self.fed, t_ms, len(pcm), time.time() * 1000))
             self.fed += len(pcm)
             self.buf = np.concatenate([self.buf, pcm])
             if len(self.buf) > MAX_MS * IN_RATE // 1000:
@@ -143,14 +149,17 @@ class Intercom:
         return True
 
     # ---------- output (audio thread) ----------
-    def pull(self, n):
-        """n samples at 48 kHz (float, gain applied), or None when there is nothing to play."""
+    def pull(self, n, t=None):
+        """n samples at 48 kHz (float, gain applied), or None when there is nothing to play. t: the output's sample
+        clock at this block (kept for the talk's first block, so latency marks can be placed on the output)."""
         with self.lock:
             if not self.active:
                 return None
+            if self.pulled == 0:
+                self.t0 = t
             s = self.settings()
             if not self.playing:
-                if len(self.buf) >= PREBUF_MS * IN_RATE // 1000 or (self.talker is None and len(self.buf)):
+                if len(self.buf) >= self.prebuf * IN_RATE // 1000 or (self.talker is None and len(self.buf)):
                     self.playing = True
                 elif len(self.out) == 0:
                     self.pulled += n
@@ -162,7 +171,8 @@ class Intercom:
                     base = self.pulled + len(self.out)
                     if self.pending:
                         c = self.consumed
-                        self.marks += [(base + (i - c) * UP, t, m) for i, t, m in self.pending if c <= i < c + k]
+                        now = time.time() * 1000
+                        self.marks += [(base + (i - c) * UP, t, m, a, now) for i, t, m, a in self.pending if c <= i < c + k]
                         self.pending = [p for p in self.pending if p[0] >= c + k]
                     self.out = np.concatenate([self.out, self.up(self.buf[:k])])
                     self.buf = self.buf[k:]
@@ -172,10 +182,12 @@ class Intercom:
             if len(y) < n:
                 if self.talker is not None and self.playing:
                     self.stats["underruns"] += 1
+                    self.prebuf = min(PREBUF_MAX, self.prebuf + PREBUF_STEP)
                 self.playing = False  # refill before playing again
                 y = np.concatenate([y, np.zeros(n - len(y))])
             self.pulled += n
             self.stats["buffer_ms"] = (len(self.buf) * UP + len(self.out)) * 1000 / OUT_RATE
+            self.stats["prebuf_ms"] = self.prebuf
             gain = 10 ** (s["mic_gain_db"] / 20) * s["level"] / 100
         return np.clip(y * gain, -1.0, 1.0)
 

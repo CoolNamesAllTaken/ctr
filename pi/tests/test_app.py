@@ -36,6 +36,12 @@ def latest(name):
     return x, meta["start"]
 
 
+def file_pos(written, t):
+    """Engine sample clock -> sample index in a fake card's recording (blocks dropped or padded are accounted)."""
+    bt, bi = max((w for w in written if w[0] is not None and w[0] <= t), key=lambda w: w[0])
+    return bi * m.BLOCK + (t - bt)
+
+
 def rms(x):
     return float(np.sqrt(np.mean(x ** 2))) if len(x) else 0.0
 
@@ -76,13 +82,13 @@ def test_intercom_plays_inside_and_ducks_the_train(running):
     m.intercom.keep_marks = True
     assert m.intercom.claim("tok", "page")
     # from the "phone": 0.6 s of silence (to measure the duck), then 1 s of 1 kHz
-    tone = 0.3 * np.sin(2 * np.pi * 1000 * np.arange(320 * 80) / 16000)
-    tone[:320 * 30] = 0
+    tone = 0.3 * np.sin(2 * np.pi * 1000 * np.arange(160 * 160) / 16000)
+    tone[:160 * 60] = 0
     t_talk = time.time()
-    for i in range(80):
-        pcm = (tone[i * 320:(i + 1) * 320] * 32767).astype("<i2").tobytes()
-        m.intercom.feed("tok", HEADER.pack(i, (t_talk + i * 0.02) * 1000) + pcm)
-        time.sleep(0.02)
+    for i in range(160):  # 10 ms frames, as the page sends
+        pcm = (tone[i * 160:(i + 1) * 160] * 32767).astype("<i2").tobytes()
+        m.intercom.feed("tok", HEADER.pack(i, (t_talk + i * 0.01) * 1000) + pcm)
+        time.sleep(0.01)
     m.intercom.release("tok")
     time.sleep(0.6)
     m.audio.hold("test", False)
@@ -111,8 +117,9 @@ def test_intercom_plays_inside_and_ducks_the_train(running):
     during = band(seg(inside[:, 1], i0, t_talk + 0.25, t_talk + 0.55))
     assert 20 * np.log10(during / before) == pytest.approx(-18, abs=1.5)
     # latency: each frame's capture time to when it played on the (fake) card
-    lat = [(i0 + idx / sr) - t / 1000 for idx, t, n in m.intercom.marks]
-    assert lat and np.median(lat) < 0.15, np.median(lat)
+    lat = [i0 + file_pos(m.router.devices["usb:1.3"].written, m.intercom.t0 + idx) / sr - t / 1000
+           for idx, t, *_ in m.intercom.marks]
+    assert lat and 0 < np.median(lat) < 0.15, np.median(lat)
 
 
 def test_speaker_test_tone_on_one_channel(running):

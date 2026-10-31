@@ -17,6 +17,9 @@ JACK = "jack"  # the 3.5 mm jack (ALSA card Headphones)
 JACK_CARD = "Headphones"
 JACK_MIXER = "PCM"
 USB_MIXER = "Speaker"  # the C-Media USB cards' playback volume
+# ALSA buffer per card: what sounds play late by (with ~30 ms of queue and pipe on top). Raise it if the log shows
+# underruns ("aplay ... underrun"); the intercom aims at < 150 ms from the phone's microphone.
+BUFFER_MS = int(os.environ.get("CALTREAT_ALSA_BUFFER_MS", "40"))
 
 FAKE = os.environ.get("CALTREAT_FAKE_AUDIO") or (None if shutil.which("aplay") else "1")
 FAKE_DIR = FAKE if FAKE and os.path.isdir(FAKE) else None
@@ -60,11 +63,12 @@ def player(card, channels=2, name=None):
     """A Popen taking raw S16_LE frames at SR on stdin, playing on the ALSA card (or the fake sink)."""
     if FAKE:
         return subprocess.Popen([sys.executable, "-m", "caltreat.fakesink", FAKE_DIR or "-", name or card,
-                                 str(SR), str(channels)], stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+                                 str(SR), str(channels), str(BUFFER_MS)], stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+                                bufsize=0)
     return subprocess.Popen(
         ["aplay", "-q", "-D", f"plughw:CARD={card}", "-t", "raw", "-f", "S16_LE", "-r", str(SR), "-c", str(channels),
-         "--buffer-time=60000", "--period-time=15000"],
-        stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+         f"--buffer-time={BUFFER_MS * 1000}", f"--period-time={BUFFER_MS * 250}"],
+        stdin=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)  # unbuffered: a buffered stdin holds ~40 ms
 
 
 _fake_volumes = {}

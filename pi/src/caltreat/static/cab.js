@@ -60,8 +60,8 @@ window.ct = (() => {
       node.port.onmessage = (ev) => {
         if (IC.node !== node) return;
         const pcm = new Int16Array(ev.data.pcm), buf = new ArrayBuffer(12 + pcm.byteLength), dv = new DataView(buf);
-        dv.setUint32(0, IC.seq++, true); dv.setFloat64(4, Date.now() - 20, true); new Int16Array(buf, 12).set(pcm); // capture time of the frame's first sample
-        if (IC.live && IC.ws && IC.ws.readyState === 1) IC.ws.send(buf); else if (IC.queue.length < 25) IC.queue.push(buf);
+        dv.setUint32(0, IC.seq++, true); dv.setFloat64(4, Date.now() - 10, true); new Int16Array(buf, 12).set(pcm); // capture time of the frame's first sample
+        if (IC.live && IC.ws && IC.ws.readyState === 1) IC.ws.send(buf); else if (IC.queue.length < 50) IC.queue.push(buf);
         level(ev.data.rms);
       };
       IC.src.connect(node); node.connect(IC.sink);
