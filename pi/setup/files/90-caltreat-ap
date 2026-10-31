@@ -1,0 +1,12 @@
+#!/bin/sh
+# NetworkManager dispatcher hook (installed by pi/setup/network.sh): when the Wi-Fi client interface comes up or
+# goes down, check the access point's channel (caltreat-ap-channel). Started without waiting: dispatcher scripts
+# must return quickly.
+# shellcheck source=/dev/null
+. "${CALTREAT_NETWORK_CONF:-/etc/caltreat/network.conf}"
+if [ "$1" = "$STA_IFACE" ]; then
+  case "$2" in
+    up | down) systemctl start --no-block caltreat-ap-channel.service ;;
+  esac
+fi
+exit 0
