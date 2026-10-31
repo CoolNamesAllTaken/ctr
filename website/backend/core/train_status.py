@@ -1,6 +1,6 @@
 """The conductor's start/stop button: employees mark today's run of a train
-stopped at a station, moving on from one, or out of service, and the live map
-shows that instead of what the timetable says.
+stopped at a station, moving on from one, out of service or canceled, and the
+live map shows that instead of what the timetable says.
 """
 
 from django.utils import timezone
@@ -34,8 +34,8 @@ def todays_statuses(now, trains=None):
 
 def set_status(train, state, now, station_id=None):
     """Mark today's run of the train stopped at, or moving on from, a station
-    on its run, or out of service."""
-    if state == TrainStatus.State.OUT_OF_SERVICE:
+    on its run, or out of service or canceled."""
+    if state in TrainStatus.OFF_THE_LINE:
         station_id = None
     else:
         station_ids = list(

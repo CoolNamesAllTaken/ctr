@@ -387,7 +387,7 @@ class TrainStatusIn(Schema):
     train_id: int
     state: TrainStatus.State
     # Where it's stopped, or the stop it's just left. Not needed when out of
-    # service.
+    # service or canceled.
     station_id: int | None = None
 
 
@@ -414,8 +414,8 @@ def list_train_statuses(request):
 
 @router.post("/train-statuses/", response=TrainStatusOut)
 def set_train_status(request, payload: TrainStatusIn):
-    """Mark today's run of a train stopped, moving or out of service. The live
-    map follows this instead of the timetable."""
+    """Mark today's run of a train stopped, moving, out of service or canceled.
+    The live map follows this instead of the timetable."""
     train = get_train(payload.train_id)
     now = timezone.now()
     try:
