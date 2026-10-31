@@ -11,6 +11,7 @@ set -euo pipefail
 
 HOST="${CALTREAT_HOST:-caltreat@caltreat.local}"
 URL="http://${HOST#*@}:8080/"
+HTTPS_URL="https://${HOST#*@}:8443/"  # self-signed certificate, made by the app on the Pi (for the intercom mic)
 REPO="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 STAGE="$(mktemp -d)"
 SOCK="/tmp/caltreat-deploy-$$.sock"  # short: macOS caps socket paths at 104 chars
@@ -65,7 +66,13 @@ EOF
 echo "==> Waiting for $URL"
 for _ in $(seq 30); do
   if curl -fs -o /dev/null --max-time 2 "$URL"; then
-    echo "Deployed $VERSION. Caltreat is up at $URL"
+    # -k: the certificate is self-signed (see README, "Intercom and HTTPS")
+    if curl -fsk -o /dev/null --max-time 3 "$HTTPS_URL"; then
+      echo "Deployed $VERSION. Caltreat is up at $URL (intercom: $HTTPS_URL)"
+    else
+      echo "Deployed $VERSION. Caltreat is up at $URL, but $HTTPS_URL doesn't answer (no intercom). Logs:" >&2
+      "${SSH[@]}" "$HOST" journalctl --user-unit caltreat -n 20 --no-pager | grep -i https >&2 || true
+    fi
     exit 0
   fi
   sleep 1
