@@ -1661,7 +1661,6 @@ class Device:
             if len(self.q) > self.QUEUE + 1:  # a card behind the pacing one (clock drift, start-up)
                 del self.q[0]
                 self.dropped += 1
-                self.dropped += 1
             self.cond.notify_all()
 
     def wait_room(self, timeout):
