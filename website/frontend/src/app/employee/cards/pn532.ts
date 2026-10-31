@@ -1,6 +1,6 @@
 // Reads card UIDs from the USB NFC reader (firmware/caltreat_usb_nfc) over Web
 // Serial. The reader speaks the PN532 serial protocol; this is just enough of
-// it to ask "which card is on the reader?".
+// it to find the card on the reader and read or write its Chipper ride block.
 
 // The bits of Web Serial used here; TypeScript's DOM types don't include it.
 export type SerialPort = EventTarget & {
@@ -38,8 +38,68 @@ const CMD_GET_FIRMWARE_VERSION = 0x02;
 const CMD_SAM_CONFIGURATION = 0x14;
 const CMD_RF_CONFIGURATION = 0x32;
 const CMD_IN_LIST_PASSIVE_TARGET = 0x4a;
+const CMD_IN_DATA_EXCHANGE = 0x40;
 
 const TIMEOUT_MS = 1000;
+
+// The Chipper ride block (spec: firmware/docs/chipper_card.md): sector 1,
+// block 4, factory keys. "CHPR", version, rides left, 8 zero bytes, CRC_A of
+// bytes 0-13 (low byte first).
+const CHIPPER_BLOCK = 4;
+const FACTORY_KEY = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+const MAGIC = [0x43, 0x48, 0x50, 0x52];
+const VERSION = 1;
+const MIFARE_AUTH_A = 0x60;
+const MIFARE_READ = 0x30;
+const MIFARE_WRITE = 0xa0;
+const SAK_CLASSIC_1K = 0x08;
+
+/** What's on a card, as far as Chipper is concerned. */
+export type CardInfo =
+  | { kind: "blank" }
+  | { kind: "chipper"; rides: number }
+  | { kind: "damaged" }
+  | { kind: "unusable"; message: string };
+
+/** A problem with the card (not the reader), worded for the employee. */
+export class CardError extends Error {}
+
+/** CRC-16/ISO-IEC-14443-3-A; "123456789" -> 0xBF05. */
+export function crcA(data: Uint8Array): number {
+  let crc = 0x6363;
+  for (const byte of data) {
+    let b = (byte ^ crc) & 0xff;
+    b = (b ^ (b << 4)) & 0xff;
+    crc = ((crc >> 8) ^ (b << 8) ^ (b << 3) ^ (b >> 4)) & 0xffff;
+  }
+  return crc;
+}
+
+/** A valid ride block holding the given rides (0-255). */
+export function makeChipperBlock(rides: number): Uint8Array {
+  const block = new Uint8Array(16);
+  block.set(MAGIC);
+  block[4] = VERSION;
+  block[5] = rides;
+  const crc = crcA(block.subarray(0, 14));
+  block[14] = crc & 0xff;
+  block[15] = crc >> 8;
+  return block;
+}
+
+export function parseChipperBlock(block: Uint8Array): CardInfo {
+  if (!MAGIC.every((b, i) => block[i] === b) || block[4] !== VERSION) {
+    return { kind: "blank" };
+  }
+  const crc = crcA(block.subarray(0, 14));
+  if (block[14] !== (crc & 0xff) || block[15] !== crc >> 8) {
+    return { kind: "damaged" };
+  }
+  return { kind: "chipper", rides: block[5] };
+}
+
+const toHex = (bytes: Uint8Array) =>
+  [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
 /** A host-to-reader frame: 00 00 FF LEN LCS D4 CMD DATA… DCS 00. */
 function frame(cmd: number, data: number[]) {
@@ -93,12 +153,36 @@ export class CardReader {
 
   /** The UID of the card on the reader as lowercase hex, or null if none. */
   async readUid(): Promise<string | null> {
-    // One target, 106 kbps type A.
-    const data = await this.command(CMD_IN_LIST_PASSIVE_TARGET, [0x01, 0x00]);
-    // NbTg, Tg, SENS_RES (2), SEL_RES, NFCIDLength, NFCID…
-    if (data[0] === 0) return null;
-    const uid = data.subarray(6, 6 + data[5]);
-    return [...uid].map((b) => b.toString(16).padStart(2, "0")).join("");
+    const target = await this.select();
+    return target && toHex(target.uid);
+  }
+
+  /** Reads the card's ride block. Problems with the card come back as info. */
+  async readChipper(uid: string): Promise<CardInfo> {
+    try {
+      await this.openBlock(uid);
+      const data = await this.exchange([MIFARE_READ, CHIPPER_BLOCK]);
+      return parseChipperBlock(data.subarray(0, 16));
+    } catch (error) {
+      if (error instanceof CardError) {
+        return { kind: "unusable", message: error.message };
+      }
+      throw error;
+    }
+  }
+
+  /** Writes a ride block and reads it back. Throws CardError if it didn't take. */
+  async writeChipper(uid: string, rides: number) {
+    const block = makeChipperBlock(rides);
+    await this.openBlock(uid);
+    await this.exchange([MIFARE_WRITE, CHIPPER_BLOCK, ...block]);
+    // The card drops out of the authenticated state after the write, so
+    // select it again to check what it kept.
+    await this.openBlock(uid);
+    const data = await this.exchange([MIFARE_READ, CHIPPER_BLOCK]);
+    if (!block.every((b, i) => data[i] === b)) {
+      throw new CardError("The card didn't keep the write. Tap it again.");
+    }
   }
 
   async close() {
@@ -106,6 +190,53 @@ export class CardReader {
     this.reader.releaseLock();
     this.writer.releaseLock();
     await this.port.close().catch(() => {});
+  }
+
+  /** The card on the reader, or null if none. */
+  private async select() {
+    // One target, 106 kbps type A.
+    const data = await this.command(CMD_IN_LIST_PASSIVE_TARGET, [0x01, 0x00]);
+    // NbTg, Tg, SENS_RES (2), SEL_RES, NFCIDLength, NFCID…
+    if (data[0] === 0) return null;
+    return { sak: data[4], uid: data.slice(6, 6 + data[5]) };
+  }
+
+  /** Selects the card with this UID and authenticates the ride block. */
+  private async openBlock(uid: string) {
+    const target = await this.select();
+    if (!target || toHex(target.uid) !== uid) {
+      throw new CardError("The card left the reader. Tap it again.");
+    }
+    if (target.uid.length !== 4) {
+      throw new CardError(
+        "This card has a 7-byte UID, which Chipper doesn't support.",
+      );
+    }
+    if (target.sak !== SAK_CLASSIC_1K) {
+      throw new CardError("This isn't a MIFARE Classic 1K card.");
+    }
+    try {
+      await this.exchange([
+        MIFARE_AUTH_A,
+        CHIPPER_BLOCK,
+        ...FACTORY_KEY,
+        ...target.uid,
+      ]);
+    } catch (error) {
+      if (!(error instanceof CardError)) throw error;
+      throw new CardError(
+        "This card isn't factory-keyed, so it can't be used.",
+      );
+    }
+  }
+
+  /** InDataExchange with the selected card; returns the card's reply. */
+  private async exchange(bytes: number[]) {
+    const data = await this.command(CMD_IN_DATA_EXCHANGE, [0x01, ...bytes]);
+    if ((data[0] & 0x3f) !== 0) {
+      throw new CardError("The card didn't answer. Tap it again.");
+    }
+    return data.subarray(1);
   }
 
   /** Sends a command and returns its response data. */
