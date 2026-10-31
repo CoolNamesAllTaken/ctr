@@ -2005,13 +2005,12 @@ class Io:
         seq = self.seq_status()
         crossing = a.busy_pattern == "crossing" or seq.get("phase") == "Crossing"
         d = self.cfg.data
-        mph = a.motor.speed * cars.MPH_PER_SPEED
         out = {}
         for f in d["functions"]:
             kind, fid = f["kind"], f["id"]
             if kind in cars.CAR_KINDS:  # headlights, ditch lights, markers: by direction and motion
-                out[fid] = cars.car_light(f, d["direction"], d["lights_on"], mph, now, d["ditch"],
-                                          d["horn_flash"] and now - self.last_horn < self.HORN_HOLD, crossing)
+                out[fid] = cars.car_light(f, d["direction"], d["lights_on"], now, d["ditch"],
+                                          now - self.last_horn < d["ditch"]["hold_s"], crossing)
                 continue
             if kind == "manual":
                 mode = self.mode(fid)
@@ -2700,7 +2699,7 @@ REVERSER = ('<button class="rev" id="rev" type="button" aria-label="Direction (r
             '<b class="ra">A</b><i aria-hidden="true">◀</i><b class="rb">B</b><span id="revTxt">A fwd</span>'
             '<em id="revHint" aria-live="polite"></em></button>')
 LIGHTS_MASTER = ('<button class="lt" id="ltMaster" type="button" title="Headlights, ditch lights and markers of both '
-                 'cars (they follow the direction): on / off"><i aria-hidden="true">⏻</i><b>Lights</b><small></small>'
+                 'cars (they follow the direction): on / off"><i aria-hidden="true">☀</i><b>Lights</b><small></small>'
                  '</button>')
 dir_refused = [0.0]  # when the reverser was last refused (shown for a moment)
 
@@ -3261,21 +3260,18 @@ async def settings(client):
                     sbtn("＋", lambda: ui.run_javascript(
                         f"getHtmlElement({new_name.id}).dispatchEvent(new Event('change'))"), "Add a light function")
                 with el("div", "srow"):
-                    el("div", "nm", "Ditch ◐◑", "Ditch lights at the leading car (the trailing car shows its markers)")
-                    with el("div", "ctlz"):
-                        for v, lab, tip in (("wigwag", "⇆ Wig-wag", "Alternate L / R while moving (over 1 mph), "
-                                                                     "steady when stopped"),
-                                            ("fra", "FRA", "49 CFR 229.125: steady; alternate with the horn (and 5 s "
-                                                           "after) and at crossings")):
-                            sbtn(lab, lambda v=v: (d["ditch"].__setitem__("mode", v), save(), body.refresh()), tip,
-                                 "on" if d["ditch"]["mode"] == v else "")
-                        if d["ditch"]["mode"] == "fra":
-                            sbtn("▲ horn", lambda: (d.__setitem__("horn_flash", not d["horn_flash"]), save(),
-                                                    body.refresh()),
-                                 "Flash with the horn (and 5 s after): on / off", "on" if d["horn_flash"] else "")
+                    el("div", "nm", "Ditch ◐◑", "49 CFR 229.125: at the leading car the ditch lights burn steady "
+                                               "with the headlight and flash alternately (L / R) when the horn "
+                                               "sounds at grade crossings, here from the horn or the Crossing "
+                                               "sequence until the time below after the last horn. The trailing "
+                                               "car shows its markers")
                 slider("Flash rate", cars.RATE_MIN, cars.RATE_MAX, d["ditch"]["rate"],
                        lambda v: (d["ditch"].__setitem__("rate", v), save()),
-                       "Flashes per minute, each lamp (FRA: 40-180)", "/min")
+                       "Flashes per minute, each lamp (49 CFR 229.125(d): 40-180)", "/min")
+                slider("Flash after horn", 0, cars.HOLD_MAX, d["ditch"]["hold_s"],
+                       lambda v: (d["ditch"].__setitem__("hold_s", v), save()),
+                       "How long the ditch lights keep flashing after the last horn (the rule: until the train is "
+                       "past the crossing)", "s")
 
             with el("section", "ctl set"):
                 el("h2", "", "Relay shield", "The Pi's 4-channel relay shield (BCM GPIO 4, 22, 6, 26)")

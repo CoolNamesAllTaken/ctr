@@ -5,20 +5,21 @@ car's exterior plays the FRONT bus (horn, bell, exterior sounds); the trailing c
 exterior sounds, no horn); both interiors play INSIDE (with the intercom). Recordings and the intercom keep
 targeting the buses, so "front" follows the direction.
 
-Lights: per car a headlight, two ditch lights and markers. Leading car: headlight on, ditch lights on, wig-wagging
-(alternating L / R) while moving and steady while stopped; markers off. Trailing car: markers on, the rest off. The
-FRA option (49 CFR 229.125): ditch lights steady, flashing alternately with the horn and at crossings.
+Lights: per car a headlight, two ditch lights and markers, as 49 CFR 229.125 has them. Leading car: headlight and
+ditch lights on, steady; the ditch lights flash alternately (L / R) when the horn sounds and through a crossing
+(229.125(d): the alternating flash comes on with the horn at grade crossings and may continue until the train is
+past; here it starts with the horn or the Crossing sequence and stops `hold_s` (default 15 s) after the last horn).
+Markers off. Trailing car: markers on, headlight and ditch lights off.
 """
 
 PHYS = ("a_ext", "a_int", "b_ext", "b_int")
 PHYS_LABEL = {"a_ext": ("A ext", "Car A, outside"), "a_int": ("A int", "Car A, inside"),
               "b_ext": ("B ext", "Car B, outside"), "b_int": ("B int", "Car B, inside")}
 DIRECTIONS = ("A", "B")
-MOVING_MPH = 1.0  # ditch lights wig-wag above this
 STANDSTILL_MPH = 0.3  # the reverser moves only below this, with the power off
 MPH_PER_SPEED = 79  # engine speed 0-1 -> mph (as the engineer page)
-DITCH_MODES = ("wigwag", "fra")
 RATE_MIN, RATE_MAX = 40, 180  # flashes / min per lamp (49 CFR 229.125(d))
+HOLD_MAX = 60  # s the ditch lights may keep flashing after the last horn
 
 
 def role(phys, direction):
@@ -72,7 +73,7 @@ CAR_FUNCTIONS = [
 ]
 CAR_KINDS = ("car_head", "car_ditch", "car_markers")
 KIND_LABEL = {"car_head": "headlight: on at the leading end",
-              "car_ditch": "ditch light: leading end; wig-wag while moving (or FRA)",
+              "car_ditch": "ditch light: leading end, steady; flashing with the horn and at crossings",
               "car_markers": "markers: on at the trailing end"}
 
 
@@ -104,9 +105,9 @@ def default_board_outputs(name, pins):
     return out
 
 
-def car_light(f, direction, lights_on, mph, now, ditch, horn_recent, crossing):
-    """(phase A, phase B) for a car function (f: its config entry). ditch: {"mode", "rate"}; horn_recent: the horn
-    sounds or sounded a moment ago; crossing: a crossing signal is running."""
+def car_light(f, direction, lights_on, now, ditch, horn_recent, crossing):
+    """(phase A, phase B) for a car function (f: its config entry). ditch: {"rate", "hold_s"}; horn_recent: the horn
+    sounds or sounded within hold_s; crossing: the Crossing sequence or signal is running."""
     if not lights_on:
         return False, False
     leading = f.get("car") == direction.lower()
@@ -123,9 +124,5 @@ def car_light(f, direction, lights_on, mph, now, ditch, horn_recent, crossing):
     phase = int(now / half) % 2 == 0
     if f.get("side") == "r":
         phase = not phase
-    if ditch.get("mode") == "fra":
-        flash = horn_recent or crossing
-    else:
-        flash = mph > MOVING_MPH
-    on = phase if flash else True
+    on = phase if horn_recent or crossing else True
     return on, on

@@ -160,11 +160,11 @@ def test_engine_rear_bus_has_the_bell_but_not_the_horn():
     assert bell(5.5, 6.8, 0) > bell(5.5, 6.8, 2)  # louder at the FRONT (-6 dB at the REAR)
 
 
-# ---- lights ----
-def fake_io(direction, mph=0.0, mode="wigwag", horn=False, crossing=False):
+# ---- lights (49 CFR 229.125) ----
+def fake_io(direction, mph=0.0, horn=False, crossing=False):
     import caltreat.__main__ as m
     cfg = Config(defaults(), "/nonexistent")
-    cfg.data.update(direction=direction, ditch={"mode": mode, "rate": 60})
+    cfg.data.update(direction=direction)
     cfg.data["boards"] = {"AA01": {"name": "A", "outputs": cars.default_board_outputs("A", 8)},
                           "BB02": {"name": "B", "outputs": cars.default_board_outputs("B", 8)}}
     audio = SimpleNamespace(horn_on=horn, motor=SimpleNamespace(speed=mph / 79), doors="closed",
@@ -179,38 +179,47 @@ def outputs(io, now):
     return relay, a, b
 
 
-def test_lights_a_leading_stopped_and_moving():
-    io = fake_io("A")
+def ditch_seen(io, t0, secs=2.0):
+    return {tuple(outputs(io, t0 + t / 10)[1][:2]) for t in range(int(secs * 10))}
+
+
+@pytest.mark.parametrize("mph", [0, 30])
+def test_a_leading_steady_moving_or_not(mph):
+    io = fake_io("A", mph=mph)
     relay, a, b = outputs(io, 100.0)
     assert relay == [True, False, False, True]  # R1 A head, R2 B head, R3 A markers, R4 B markers
-    assert a == [True, True, True, False] and b == [False, False, False, True]  # stopped: ditch lights steady
-    io = fake_io("A", mph=20)
-    seen = {tuple(outputs(io, 100.0 + t / 10)[1][:2]) for t in range(20)}
-    assert seen == {(True, False), (False, True)}  # moving: L and R alternate, never both
+    assert a == [True, True, True, False] and b == [False, False, False, True]
+    assert ditch_seen(io, 100.0) == {(True, True)}  # steady: no wig-wag just for moving
+
+
+def test_ditch_lights_flash_with_the_horn_then_hold():
+    io = fake_io("A", mph=30, horn=True)
+    assert ditch_seen(io, 100.0) == {(True, False), (False, True)}  # alternate, never both
     # 60 / min each: L on for 0.5 s, then R
     assert outputs(io, 100.0)[1][:2] == [True, False] and outputs(io, 100.5)[1][:2] == [False, True]
+    io.audio.horn_on = False  # horn released at t = 101.9 (last seen): keeps flashing for hold_s = 15 s
+    assert ditch_seen(io, 110.0) == {(True, False), (False, True)}
+    assert ditch_seen(io, 118.0) == {(True, True)}
+    io.cfg.data["ditch"]["hold_s"] = 30
+    assert ditch_seen(io, 125.0) == {(True, False), (False, True)}
 
 
-def test_lights_b_leading_and_master_off():
-    io = fake_io("B", mph=20)
+def test_ditch_lights_flash_through_a_crossing():
+    io = fake_io("A", mph=30, crossing=True)
+    assert ditch_seen(io, 100.0) == {(True, False), (False, True)}
+
+
+def test_b_leading_and_master_off():
+    io = fake_io("B", mph=20, horn=True)
     relay, a, b = outputs(io, 100.0)
     assert relay == [False, True, True, False] and a == [False, False, False, True] and b[2:] == [True, False]
+    assert ditch_seen(io, 100.0) == {(False, False)}  # the trailing car's ditch lights stay off
     io.cfg.data["lights_on"] = False
     relay, a, b = outputs(io, 100.0)
     assert not any(relay) and not any(a) and not any(b)
 
 
-def test_lights_fra_mode():
-    io = fake_io("A", mph=20, mode="fra")
-    assert outputs(io, 100.0)[1][:2] == [True, True]  # steady while moving
-    io = fake_io("A", mph=20, mode="fra", horn=True)
-    seen = {tuple(outputs(io, 100.0 + t / 10)[1][:2]) for t in range(20)}
-    assert seen == {(True, False), (False, True)}  # alternate with the horn
-    io = fake_io("A", mode="fra", crossing=True)
-    assert {tuple(outputs(io, 100.0 + t / 10)[1][:2]) for t in range(20)} == {(True, False), (False, True)}
-
-
-def test_wigwag_rate_setting():
-    io = fake_io("A", mph=20)
+def test_flash_rate_setting():
+    io = fake_io("A", horn=True)
     io.cfg.data["ditch"]["rate"] = 120  # 120 / min: 0.25 s halves
     assert outputs(io, 100.0)[1][:2] == [True, False] and outputs(io, 100.25)[1][:2] == [False, True]

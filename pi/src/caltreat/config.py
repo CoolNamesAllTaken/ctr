@@ -74,7 +74,7 @@ def defaults():
         "depart_horn": True,
         "direction": "A",  # the reverser: which car leads (cars.py)
         "speakers": cars.default_speakers(),  # a_ext, a_int, b_ext, b_int: card + channel each
-        "ditch": {"mode": "wigwag", "rate": 60},  # wigwag (while moving) or fra; flashes / min per lamp
+        "ditch": {"rate": 60, "hold_s": 15},  # flashes / min per lamp; s they keep flashing after the last horn
         "lights_on": True,  # master switch for the per-car lamps (engineer page)
         "volumes": {},  # ALSA card volume % by device ("jack", "usb:1.2"); unset = leave as it is
         "intercom": {"mic_gain_db": 0, "level": 80, "duck_db": -18, "timeout_s": 60},
@@ -168,9 +168,9 @@ def validate(c):
     if not isinstance(c.get("lights_on", True), bool):
         errs.append("lights_on: not true/false")
     dt = c.get("ditch", {})
-    if not isinstance(dt, dict) or dt.get("mode", "wigwag") not in cars.DITCH_MODES or \
-            not _num(dt.get("rate", 60), cars.RATE_MIN, cars.RATE_MAX):
-        errs.append(f"ditch: mode one of {', '.join(cars.DITCH_MODES)}, rate {cars.RATE_MIN}-{cars.RATE_MAX}")
+    if not isinstance(dt, dict) or not _num(dt.get("rate", 60), cars.RATE_MIN, cars.RATE_MAX) or \
+            not _num(dt.get("hold_s", 15), 0, cars.HOLD_MAX):
+        errs.append(f"ditch: rate {cars.RATE_MIN}-{cars.RATE_MAX} / min, hold_s 0-{cars.HOLD_MAX}")
     fns = c.get("functions", [])
     fn_ids = set()
     builtin = {f[0] for f in BUILTIN_FUNCTIONS}  # always there (complete() adds them back)
