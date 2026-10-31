@@ -35,10 +35,11 @@ export type Rider = {
 };
 
 export type Kiosk = {
-  id: number;
+  id: string;
   name: string;
-  station_id: number;
-  station_name: string;
+  // Unset for a kiosk that has tapped but not been assigned a station yet.
+  station_id: number | null;
+  station_name: string | null;
 };
 
 export type Tap = {

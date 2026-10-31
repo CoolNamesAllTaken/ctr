@@ -180,11 +180,19 @@ class Rider(models.Model):
 
 
 class Kiosk(models.Model):
-    """A card-tap kiosk; a station can have several."""
+    """A card-tap kiosk; a station can have several. A kiosk is registered the
+    first time it reports a tap, with no station until an employee assigns
+    one."""
 
+    # The kiosk's own ID, which it sends with every tap.
+    id = models.CharField(primary_key=True, max_length=64)
     name = models.CharField(max_length=100)
     station = models.ForeignKey(
-        Station, on_delete=models.PROTECT, related_name="kiosks"
+        Station,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="kiosks",
     )
 
     class Meta:
@@ -195,7 +203,7 @@ class Kiosk(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.name} at {self.station}"
+        return f"{self.name} at {self.station or 'no station'}"
 
 
 class KioskTap(models.Model):

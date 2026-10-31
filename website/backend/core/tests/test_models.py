@@ -33,7 +33,7 @@ def test_transit_models():
         name="101", direction=Train.Direction.NORTHBOUND, traincar=car
     )
     station = Station.objects.create(name="San Jose", zone=1, position=0)
-    kiosk = Kiosk.objects.create(name="North platform", station=station)
+    kiosk = Kiosk.objects.create(id="sj-n", name="North platform", station=station)
     alert = Alert.objects.create(message="Ghosts on the tracks", train=train)
     arrival = Arrival.objects.create(train=train, station=station, time=time(20, 15))
     instance = ArrivalInstance.objects.create(

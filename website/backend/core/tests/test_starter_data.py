@@ -16,6 +16,7 @@ def test_load_starter_data(client):
     ]
     for station in Station.objects.all():
         assert station.kiosks.count() == 2
+    assert Kiosk.objects.filter(id="san-jose-northbound-platform").exists()
 
 
 @pytest.mark.django_db

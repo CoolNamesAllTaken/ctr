@@ -14,7 +14,7 @@ from django.db import transaction
 from django.db.models import Max, Min
 from django.utils import timezone
 
-from core.models import ChipperCard, Kiosk, KioskTap, Station
+from core.models import ChipperCard, KioskTap, Station
 
 BASE_FARE = Decimal("3.75")
 PER_ZONE_FARE = Decimal("2.50")
@@ -52,15 +52,14 @@ def open_tap_on(card, now):
 
 
 @transaction.atomic
-def tap(card_uid, kiosk_id):
+def tap(card_uid, kiosk):
     """Record a tap of this card at this kiosk. Returns (tap, tap_on), where
     tap_on is the tap this one closed, or None if this tap starts a trip."""
     card = ChipperCard.objects.select_for_update().filter(uid=card_uid).first()
     if card is None:
         raise FareError("No Chipper card with that UID.")
-    kiosk = Kiosk.objects.select_related("station").filter(id=kiosk_id).first()
-    if kiosk is None:
-        raise FareError("That kiosk no longer exists.")
+    if kiosk.station is None:
+        raise FareError(f"Kiosk {kiosk.id} isn't assigned to a station.")
 
     now = timezone.now()
     tap_on = open_tap_on(card, now)

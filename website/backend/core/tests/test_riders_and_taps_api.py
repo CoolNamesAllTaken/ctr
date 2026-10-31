@@ -14,10 +14,10 @@ def kiosks():
     pa = Station.objects.create(name="Palo Alto", zone=2, position=1)
     sf = Station.objects.create(name="San Francisco", zone=1, position=2)
     return {
-        "sj": Kiosk.objects.create(name="Northbound platform", station=sj),
-        "sj2": Kiosk.objects.create(name="Southbound platform", station=sj),
-        "pa": Kiosk.objects.create(name="Northbound platform", station=pa),
-        "sf": Kiosk.objects.create(name="Northbound platform", station=sf),
+        "sj": Kiosk.objects.create(id="sj-nb", name="Northbound platform", station=sj),
+        "sj2": Kiosk.objects.create(id="sj-sb", name="Southbound platform", station=sj),
+        "pa": Kiosk.objects.create(id="pa-nb", name="Northbound platform", station=pa),
+        "sf": Kiosk.objects.create(id="sf-nb", name="Northbound platform", station=sf),
     }
 
 
@@ -179,6 +179,71 @@ def test_tap_unknown_card(client, kiosks):
 
     assert response.status_code == 422
     assert response.json() == {"detail": "No Chipper card with that UID."}
+
+
+@pytest.mark.django_db
+def test_tap_at_new_kiosk_registers_it(client, kiosks, card):
+    response = post(
+        client, "/api/taps/", {"card_uid": card.uid, "kiosk_id": " reader-7 "}
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Kiosk reader-7 isn't assigned to a station."}
+    kiosk = Kiosk.objects.get(id="reader-7")
+    assert (kiosk.name, kiosk.station) == ("reader-7", None)
+    assert not KioskTap.objects.exists()
+    card.refresh_from_db()
+    assert card.balance == Decimal("20.00")
+
+
+@pytest.mark.django_db
+def test_tap_at_registered_kiosk_once_assigned(client, kiosks, card):
+    post(client, "/api/taps/", {"card_uid": card.uid, "kiosk_id": "reader-7"})
+    Kiosk.objects.filter(id="reader-7").update(station=kiosks["sf"].station)
+
+    response = post(
+        client, "/api/taps/", {"card_uid": card.uid, "kiosk_id": "reader-7"}
+    )
+
+    assert response.status_code == 201
+    assert response.json()["tap"]["station_name"] == "San Francisco"
+    assert Kiosk.objects.count() == 5
+
+
+@pytest.mark.django_db
+def test_tap_unknown_card_still_registers_kiosk(client):
+    response = post(client, "/api/taps/", {"card_uid": "beef", "kiosk_id": "new"})
+
+    assert response.status_code == 422
+    assert Kiosk.objects.filter(id="new").exists()
+
+
+@pytest.mark.django_db
+def test_tap_rejects_blank_kiosk_id(client, card):
+    response = post(client, "/api/taps/", {"card_uid": card.uid, "kiosk_id": " "})
+
+    assert response.status_code == 422
+    assert not Kiosk.objects.exists()
+
+
+@pytest.mark.django_db
+def test_list_kiosks_includes_unassigned(client, kiosks, card):
+    post(client, "/api/taps/", {"card_uid": card.uid, "kiosk_id": "reader-7"})
+
+    response = client.get("/api/kiosks/")
+
+    assert response.json()[0] == {
+        "id": "sj-nb",
+        "name": "Northbound platform",
+        "station_id": kiosks["sj"].station_id,
+        "station_name": "San Jose",
+    }
+    assert response.json()[-1] == {
+        "id": "reader-7",
+        "name": "reader-7",
+        "station_id": None,
+        "station_name": None,
+    }
 
 
 @pytest.mark.django_db
