@@ -86,9 +86,19 @@ def test_speakers_route_to_their_card_and_channel(running):
 
 
 def test_intercom_plays_inside_and_ducks_the_train(running):
+    # The INSIDE bus as the engine made it, before the duck: {engine sample clock of the block: samples}
+    bus_inside, render = {}, m.audio.render_buses
+
+    def recording_render():
+        b = render()
+        bus_inside[m.audio.t - m.BLOCK] = np.array(b["inside"], dtype=float)
+        return b
+
+    m.audio.render_buses = recording_render
     m.audio.hold("test", True)  # a steady horn to duck
     time.sleep(0.8)
     m.intercom.keep_marks = True
+    t_claim = m.audio.t
     assert m.intercom.claim("tok", "page")
     # from the "phone": 0.6 s of silence (to measure the duck), then 1 s of 1 kHz
     tone = 0.3 * np.sin(2 * np.pi * 1000 * np.arange(160 * 160) / 16000)
@@ -102,6 +112,7 @@ def test_intercom_plays_inside_and_ducks_the_train(running):
     time.sleep(0.6)
     m.audio.hold("test", False)
     time.sleep(0.3)
+    m.audio.render_buses = render
     jack, j0 = latest("jack")
     inside, i0 = latest("usb-1.3")
     sr = 48000
@@ -117,16 +128,20 @@ def test_intercom_plays_inside_and_ducks_the_train(running):
     front = seg(jack[:, 0], j0, t_talk + 0.9, t_talk + 1.5)
     fs = np.abs(np.fft.rfft(front * np.hanning(len(front))))
     assert fs[np.argmin(abs(f - 1000))] < 0.01 * spec.max()
-    # the horn on INSIDE is ducked by 18 dB while talking: compare its own band (the horn's 2nd harmonic ~750 Hz)
-    def band(x, lo=600, hi=900):
-        s = np.abs(np.fft.rfft(x * np.hanning(len(x))))
-        ff = np.fft.rfftfreq(len(x), 1 / sr)
-        return float(np.sqrt(np.sum(s[(ff > lo) & (ff < hi)] ** 2))) / len(x)  # amplitude, any window length
-    # relative to FRONT (the same horn, not ducked): the v12 horn's level changes over its first second
-    def rel(t0, t1):
-        return band(seg(inside[:, 1], i0, t0, t1)) / band(seg(jack[:, 0], j0, t0, t1))
-    duck = 20 * np.log10(rel(t_talk + 0.25, t_talk + 0.55) / rel(t_talk - 0.6, t_talk - 0.1))
-    assert duck == pytest.approx(-18, abs=1.5)
+    # the train sound on INSIDE is ducked by 18 dB while talking: what the card played over the INSIDE bus the engine
+    # made, block by block (the same samples, so the horn's own level changes don't matter; FRONT is no reference
+    # with the v12 engine, its mix differs from INSIDE's and their ratio wanders by ~1.5 dB)
+    blocks = {t: bi for t, bi in m.router.devices["usb:1.3"].written if t is not None}
+
+    def gain(s0, s1):  # engine sample clock window, relative to the claim
+        ts = [t for t in bus_inside if t_claim + s0 * sr <= t and t + m.BLOCK <= t_claim + s1 * sr and t in blocks]
+        out = np.concatenate([inside[blocks[t] * m.BLOCK:(blocks[t] + 1) * m.BLOCK, 1] for t in ts])
+        ref = np.concatenate([bus_inside[t] for t in ts])
+        assert len(ts) * m.BLOCK > 0.2 * sr and rms(ref) > 0.002
+        return rms(out) / rms(ref)
+
+    duck = 20 * np.log10(gain(0.1, 0.55) / gain(-0.6, -0.05))  # silence from the phone until 0.6 s
+    assert duck == pytest.approx(-18, abs=0.3)
     # latency: each frame's capture time to when it played on the (fake) card
     lat = [i0 + file_pos(m.router.devices["usb:1.3"].written, m.intercom.t0 + idx) / sr - t / 1000
            for idx, t, *_ in m.intercom.marks]
