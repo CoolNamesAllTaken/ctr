@@ -65,6 +65,7 @@ def running():
                               "b_ext": {"device": "usb#1", "ch": "left", "level": 50},
                               "b_int": {"device": "none", "ch": "both", "level": 100}}
     m.cfg.data["intercom"]["duck_db"] = -18
+    m.cfg.data["trim_db"] = {"jack": 0.0}  # every card at the same gain: the levels below compare cards
     m.cfg.save()
     if m.sidecar:
         m.sidecar.start()

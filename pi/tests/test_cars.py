@@ -45,7 +45,7 @@ def test_migrate_v1_configs():
                                "b_ext": {"device": "usb:1.2", "ch": "right", "level": 60},
                                "b_int": {"device": "none", "ch": "both", "level": 100}}
     assert "relay" not in new and {"head", "markers", "a_head"} <= {f["id"] for f in new["functions"]}
-    assert new["version"] == 3 and new["direction"] == "A"
+    assert new["version"] == 4 and new["direction"] == "A"
 
 
 def test_board_defaults_follow_the_board_name(tmp_path):

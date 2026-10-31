@@ -27,7 +27,7 @@ def v2(**kw):
 # ---- config: the relay shield is gone ----
 def test_defaults_have_no_relays_and_the_stack_on_gp4_7():
     d = defaults()
-    assert "relay" not in d and d["version"] == 3 and validate(d) == []
+    assert "relay" not in d and d["version"] == 4 and validate(d) == []
     assert {"stack_green", "stack_yellow", "stack_red", "stack_blue"} <= {f["id"] for f in d["functions"]}
     assert [o["fn"] for o in board_defaults("A")["outputs"]] == [
         "a_ditch_l", "a_ditch_r", "a_head", "a_markers", "stack_green", "stack_yellow", "stack_red", "stack_blue"]
@@ -35,7 +35,7 @@ def test_defaults_have_no_relays_and_the_stack_on_gp4_7():
 
 def test_v2_default_relays_drop_and_boards_get_the_stack():
     new, errs = parse(json.dumps(v2()))
-    assert errs == [] and new["version"] == 3 and "relay" not in new
+    assert errs == [] and new["version"] == 4 and "relay" not in new
     for uid, car in (("AA01", "a"), ("BB02", "b")):
         assert [o["fn"] for o in new["boards"][uid]["outputs"]] == [
             f"{car}_ditch_l", f"{car}_ditch_r", f"{car}_head", f"{car}_markers",
@@ -70,9 +70,9 @@ def test_v2_relays_with_no_free_pin_are_reported():
 def test_v2_file_is_migrated_on_load_and_kept(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps(v2()))
     cfg = Config.load(tmp_path)
-    assert cfg.error is None and cfg.data["version"] == 3
+    assert cfg.error is None and cfg.data["version"] == 4
     on_disk = json.loads((tmp_path / "config.json").read_text())
-    assert on_disk["version"] == 3 and "relay" not in on_disk
+    assert on_disk["version"] == 4 and "relay" not in on_disk
     assert json.loads((tmp_path / "config.json.v2").read_text())["relay"] == cars.DEFAULT_RELAY
 
 

@@ -38,7 +38,7 @@ def test_partial_and_old_files_get_defaults():
     new, errs = parse(json.dumps({"version": 1, "mix": {"bell": 50}}))
     assert errs == []
     assert new["mix"]["bell"] == 50 and new["mix"]["horn"] == 100
-    assert new["version"] == 3 and new["speakers"]["a_ext"] == {"device": "usb#1", "ch": "left", "level": 100}
+    assert new["version"] == 4 and new["speakers"]["a_ext"] == {"device": "usb#1", "ch": "left", "level": 100}
     assert {f["id"] for f in new["functions"]} >= {"a_head", "b_markers", "a_ditch_l", "doors"}
 
 
@@ -121,7 +121,7 @@ def test_listeners_run_on_save(tmp_path):
     assert seen == [10]
 
 
-@pytest.mark.parametrize("text", ['{"version": 4, "mix": {"horn": 33}}', '{"version": 1, "mix": {"horn": 999}}', "{oops"])
+@pytest.mark.parametrize("text", ['{"version": 5, "mix": {"horn": 33}}', '{"version": 1, "mix": {"horn": 999}}', "{oops"])
 def test_unusable_file_is_kept_before_defaults_overwrite_it(tmp_path, text):
     (tmp_path / "config.json").write_text(text)
     cfg = Config.load(tmp_path)
