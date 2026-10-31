@@ -1078,7 +1078,7 @@ speedups.install()  # cheaper page builds (speedups.py)
 # side (a phone opening the settings page builds hundreds of elements) holds it in slices of 5 ms by default, so
 # the sound thread waited 5 ms at each step and fell behind (gaps, underruns). 0.5 ms slices fix most of that for a
 # few % of CPU (2 cores, a phone reloading the settings page nonstop: ~380 gaps and ~800 card underruns in 40 s ->
-# ~7 and ~15; with the GC tuning below and the longer buffer, ~2-7 underruns).
+# ~7 and ~15; with the GC tuning below and the longer waits, ~2-7 underruns).
 sys.setswitchinterval(float(os.environ.get("CALTREAT_GIL_SLICE_MS", "0.5")) / 1000)
 STATIC = Path(__file__).parent / "static"
 

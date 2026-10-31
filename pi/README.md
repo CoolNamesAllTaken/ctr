@@ -147,10 +147,11 @@ sound card underruns: `journalctl --user-unit caltreat | grep -E 'blocked|underr
   engine at nice -10 (the pages at 0) once `sudo ~/caltreat/setup/network.sh`
   has allowed it (`LimitNICE` for the app user's services) and the Pi has
   rebooted. Without it the log says "can't give the sound a higher priority".
-- **Buffer**: each card holds 60 ms (`CALTREAT_ALSA_BUFFER_MS`). If the Health
-  panel keeps showing underruns, 80-100 rides out more (add
+- **Buffer**: each card holds 50 ms (`CALTREAT_ALSA_BUFFER_MS`). If the Health
+  panel keeps showing underruns, 80-100 rides out longer stalls (add
   `Environment=CALTREAT_ALSA_BUFFER_MS=80` to `caltreat.service`) at the cost
-  of the intercom running ~160 ms late.
+  of the intercom running later (each ms of buffer is a ms of delay; ~135 ms
+  at 50, ~165 ms at 80).
 
 #### `tools/diagnose.sh`
 
