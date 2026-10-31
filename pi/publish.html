@@ -1,0 +1,591 @@
+<title>KISS Cab Sounds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  /* One deliberate look: a night-time cab control desk (used in a costume, in the dark). */
+  :root {
+    color-scheme: dark;
+    --desk: #14171b;
+    --panel: #1e2227;
+    --bezel: #2b3036;
+    --line: #3b424b;
+    --ink: #e9ecef;
+    --muted: #98a1ab;
+    --red: #e1251b;
+    --red-deep: #9e150f;
+    --amber: #f5a623;
+    --green: #2fd07a;
+    --lcd: #0a0f0c;
+    --lcd-ink: #9ff0bd;
+    --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+    --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--desk); color: var(--ink); font: 15px/1.45 var(--body);
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+  }
+  .desk { max-width: 520px; margin: 0 auto; padding-inline: 16px; padding-block: 14px 20px; display: flex; flex-direction: column; gap: 14px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .mark { display: flex; align-items: baseline; gap: 10px; }
+  .mark b { font: 700 30px/1 var(--display); letter-spacing: .06em; }
+  .mark span { font: 500 13px/1.2 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .chip { font: 600 12px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; padding: 7px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .chip.live { color: var(--desk); background: var(--green); border-color: var(--green); }
+
+  .lcd { background: var(--lcd); border: 2px solid var(--bezel); border-radius: 10px; padding: 10px 14px;
+    display: grid; grid-template-columns: 1fr 1fr auto; gap: 4px 16px; align-items: end; }
+  .lcd .k { font: 600 11px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: #5f8f70; }
+  .lcd .v { font: 500 30px/1.05 var(--mono); color: var(--lcd-ink); font-variant-numeric: tabular-nums; }
+  .lcd .v small { font-size: 13px; color: #6fb58a; margin-left: 4px; }
+  .lamps { grid-row: 1 / span 2; grid-column: 3; display: flex; flex-direction: column; gap: 6px; }
+  .lamp { display: flex; align-items: center; gap: 6px; font: 600 11px/1 var(--display); letter-spacing: .1em; color: #5f8f70; text-transform: uppercase; }
+  .lamp i { width: 10px; height: 10px; border-radius: 50%; background: #26302a; box-shadow: inset 0 0 0 1px #3c4a40; }
+  .lamp.on.bell i { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+  .lamp.on.door i { background: var(--green); box-shadow: 0 0 10px var(--green); }
+  .lamp.on.horn i { background: var(--red); box-shadow: 0 0 10px var(--red); }
+
+  .ctl { background: var(--panel); border: 1px solid var(--bezel); border-radius: 12px; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .ctl h2 { margin: 0; font: 600 13px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; }
+  .ctl h2 output { color: var(--ink); font-family: var(--mono); letter-spacing: 0; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; background: transparent; height: 44px; margin: 0; touch-action: none; }
+  input[type=range]::-webkit-slider-runnable-track { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--line), #59626d); }
+  input[type=range]::-moz-range-track { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--line), #59626d); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 34px; height: 40px; margin-top: -15px; border-radius: 6px;
+    background: linear-gradient(#d9dde1, #9aa2ab); border: 2px solid #111; }
+  input[type=range]::-moz-range-thumb { width: 30px; height: 36px; border-radius: 6px; background: linear-gradient(#d9dde1, #9aa2ab); border: 2px solid #111; }
+  #throttle { height: 56px; }
+  #throttle::-webkit-slider-thumb { width: 46px; height: 52px; margin-top: -21px; background: linear-gradient(#f0f2f4, #a9b0b8); }
+  .notches { display: flex; justify-content: space-between; font: 500 11px/1 var(--mono); color: var(--muted); padding-inline: 8px; }
+
+  .pads { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button { font: inherit; color: inherit; cursor: pointer; touch-action: none; }
+  .pad { min-height: 76px; border-radius: 12px; border: 2px solid var(--bezel); background: var(--panel); display: flex; flex-direction: column;
+    align-items: flex-start; justify-content: space-between; padding: 10px 12px; text-align: left; transition: transform .05s, background .1s; }
+  .pad b { font: 700 22px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; }
+  .pad span { font-size: 12px; color: var(--muted); }
+  .pad:active, .pad.down { transform: scale(.98); }
+  .pad.bell.on { background: #3a2a0c; border-color: var(--amber); box-shadow: 0 0 18px rgba(245,166,35,.35); }
+  .pad.door.on { background: #0e3321; border-color: var(--green); box-shadow: 0 0 18px rgba(47,208,122,.3); }
+  .pad.flash { border-color: var(--ink); }
+
+  .patterns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pat { flex: 1 1 calc(50% - 8px); min-height: 48px; border-radius: 10px; border: 1px solid var(--line); background: var(--bezel);
+    display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 12px; }
+  .pat b { font: 600 15px/1.1 var(--display); letter-spacing: .05em; text-transform: uppercase; text-align: left; }
+  .pat code { font: 500 15px/1 var(--mono); color: var(--red); letter-spacing: .12em; white-space: nowrap; }
+  .pat.busy { border-color: var(--red); }
+
+  .hornbtn { min-height: 128px; border-radius: 18px; border: 3px solid #2a0605;
+    background: radial-gradient(120% 140% at 50% 0%, #ff4a3d, var(--red) 45%, var(--red-deep)); color: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    box-shadow: 0 6px 0 #5c0b07, 0 10px 24px rgba(0,0,0,.5); }
+  .hornbtn b { font: 700 44px/1 var(--display); letter-spacing: .14em; }
+  .hornbtn span { font: 600 13px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; opacity: .85; }
+  .hornbtn.down { transform: translateY(4px); box-shadow: 0 2px 0 #5c0b07, 0 0 40px rgba(225,37,27,.7); background: radial-gradient(120% 140% at 50% 0%, #ff7a6f, #ff3b2f 45%, var(--red)); }
+
+  details { background: var(--panel); border: 1px solid var(--bezel); border-radius: 12px; padding: 0 14px; }
+  summary { font: 600 14px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding: 16px 0; cursor: pointer; }
+  .mix { display: grid; gap: 4px; padding-bottom: 14px; }
+  .mix label { display: flex; justify-content: space-between; font: 600 12px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin-top: 6px; }
+  .mix select { font: 500 15px var(--body); background: var(--bezel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .notes { font-size: 13px; color: var(--muted); display: grid; gap: 8px; max-width: 65ch; }
+  .notes p { margin: 0; }
+  .keys { display: none; }
+  @media (hover: hover) and (pointer: fine) { .keys { display: block; } }
+  kbd { font: 500 12px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: var(--ink); }
+  button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .pad, .hornbtn { transition: none; } }
+</style>
+<main class="desk">
+  <header>
+    <div class="mark"><b>KISS</b><span>Caltrain EMU · cab sounds</span></div>
+    <div class="chip" id="status">Tap any control</div>
+  </header>
+
+  <section class="lcd" aria-label="Cab display">
+    <div class="k">Speed</div><div class="k">Inverter</div>
+    <div class="lamps">
+      <div class="lamp horn" id="lampHorn"><i></i>Horn</div>
+      <div class="lamp bell" id="lampBell"><i></i>Bell</div>
+      <div class="lamp door" id="lampDoor"><i></i>Doors</div>
+    </div>
+    <div class="v"><span id="mph">0</span><small>mph</small></div>
+    <div class="v"><span id="hz">0</span><small>Hz</small></div>
+  </section>
+
+  <section class="ctl">
+    <h2><label for="throttle">Power controller</label><output id="thrOut">0 %</output></h2>
+    <input type="range" id="throttle" min="0" max="100" step="1" value="0" aria-label="Throttle">
+    <div class="notches" aria-hidden="true"><span>OFF</span><span>25</span><span>50</span><span>75</span><span>FULL</span></div>
+  </section>
+
+  <section class="pads">
+    <button class="pad bell" id="bell" aria-pressed="false"><b>Bell</b><span>Tap on / off · 2.5 strikes/s</span></button>
+    <button class="pad door" id="door" aria-pressed="false"><b>Doors</b><span>Tap: 3 s · hold: as long as held</span></button>
+    <button class="pad" id="air"><b>Air</b><span>Brake release hiss</span></button>
+    <button class="pad" id="squeal"><b>Brakes</b><span>Squeal while stopping</span></button>
+  </section>
+
+  <button class="hornbtn" id="horn" aria-label="Horn (hold)"><b>HORN</b><span>Hold to sound</span></button>
+
+  <section class="ctl">
+    <h2>Horn signals <span style="letter-spacing:0;text-transform:none;font-family:var(--body);font-weight:400">– long · o short</span></h2>
+    <div class="patterns" id="patterns"></div>
+  </section>
+
+  <details id="mixBox">
+    <summary>Mix &amp; settings</summary>
+    <div class="mix">
+      <label for="vMaster">Master volume <output id="oMaster"></output></label><input type="range" id="vMaster" min="0" max="100" value="85">
+      <label for="vHorn">Horn intensity <output id="oHorn"></output></label><input type="range" id="vHorn" min="0" max="100" value="85">
+      <label for="vBell">Bell <output id="oBell"></output></label><input type="range" id="vBell" min="0" max="100" value="75">
+      <label for="vMotor">Motor whine <output id="oMotor"></output></label><input type="range" id="vMotor" min="0" max="100" value="80">
+      <label for="vDoor">Door tone <output id="oDoor"></output></label><input type="range" id="vDoor" min="0" max="100" value="70">
+      <label for="vHiss">Air &amp; brakes <output id="oHiss"></output></label><input type="range" id="vHiss" min="0" max="100" value="70">
+      <label for="accel">Acceleration, standstill to full</label>
+      <select id="accel"><option value="6">Quick (6 s)</option><option value="14" selected>Costume (14 s)</option><option value="60">Real train (about 60 s)</option></select>
+    </div>
+  </details>
+
+  <section class="notes">
+    <p>Every sound is synthesized live from measurements of Caltrain Stadler KISS EMUs, not played from recordings. Horn: one note near F#4 (376 Hz) with its measured harmonics and the small pitch drop at the start of each blast. Bell: the electronic bell's seven partials, struck every 0.4 s. Doors: the 1760 Hz closing tone. Motor: the inverter whine lines as they move with speed.</p>
+    <p>No sound on an iPhone? Turn off the silent switch and raise the volume. Keep this page in front; the screen stays on while it is open where the phone allows it.</p>
+    <p class="keys">Keys: <kbd>Space</kbd> horn (hold) · <kbd>B</kbd> bell · <kbd>D</kbd> doors (hold) · <kbd>A</kbd> air · <kbd>S</kbd> brakes · <kbd>↑</kbd><kbd>↓</kbd> power · <kbd>0</kbd> power off · <kbd>1</kbd>–<kbd>5</kbd> horn signals</p>
+  </section>
+</main>
+
+<script type="text/plain" id="kiss-engine">
+// KISS EMU sound engine: pure per-sample DSP, no DOM, no Web Audio nodes. The same text runs in the browser's
+// AudioWorklet (or a ScriptProcessor fallback) and in Node for the offline renders (app/render.js).
+// Parameters come from analysis/params.json (fitted to recordings of Caltrain Stadler KISS EMUs).
+const KISS_PARAMS = {
+  horn: { f0: 376.2, harm: [-0.4, 0.0, -5.6, -8.1, -13.2, -12.9, -16.5, -23.4, -23.9, -22.3, -23.5, -24.5],
+          bend: 56.7, bendTau: 0.15, atk: 0.061, rel: 0.293, noise: -55.9 },
+  bell: { period: 0.4, partials: [[805.0, -10.6, -37.6], [1387.5, 0.0, -4.1], [2035.0, -6.2, -23.8],
+          [2737.5, -18.1, -24.0], [3495.0, -16.0, -29.9], [4312.5, -27.0, -65.2], [5202.5, -9.2, -147.9]] },
+  door: { f0: 1760, harm: [-0.8, 0.0, -18.9, -24.0] },
+  motor: { aMax: 980, cSlope: 2.144, cOff: 34.3, bSlope: 2.985, bOff: 745.2, dSlope: 0.181, carrier: 2022, carSlope: 0.419,
+           lvC: -7.4, lvCar: -2.8, lvB: -12, lvD: -8 },
+  hiss: { whistle: 7214, dur: 3.0 },
+  squeal: { f: 2150, wobble: 125, dur: 3.5 },
+};
+
+const TWO_PI = 2 * Math.PI;
+const db = (d) => Math.pow(10, d / 20);
+const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+const ramp = (x, a, b) => clamp((x - a) / (b - a), 0, 1); // 0 below a, 1 above b
+const tauCoef = (sr, tau) => 1 - Math.exp(-1 / (sr * tau));
+
+class Rng { // xorshift32, uniform in [-1, 1)
+  constructor(seed) { this.s = (seed >>> 0) || 1; }
+  next() { let x = this.s; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; this.s = x >>> 0; return this.s / 2147483648 - 1; }
+}
+
+class Biquad { // RBJ cookbook
+  constructor() { this.b0 = 1; this.b1 = 0; this.b2 = 0; this.a1 = 0; this.a2 = 0; this.z1 = 0; this.z2 = 0; }
+  set(type, f, q, sr, gainDb = 0) {
+    const w = TWO_PI * Math.min(f, sr * 0.45) / sr, c = Math.cos(w), s = Math.sin(w), al = s / (2 * q), A = Math.pow(10, gainDb / 40);
+    let b0, b1, b2, a0, a1, a2;
+    if (type === 'lp') { b0 = (1 - c) / 2; b1 = 1 - c; b2 = b0; a0 = 1 + al; a1 = -2 * c; a2 = 1 - al; }
+    else if (type === 'hp') { b0 = (1 + c) / 2; b1 = -(1 + c); b2 = b0; a0 = 1 + al; a1 = -2 * c; a2 = 1 - al; }
+    else if (type === 'bp') { b0 = al; b1 = 0; b2 = -al; a0 = 1 + al; a1 = -2 * c; a2 = 1 - al; }
+    else { b0 = 1 + al * A; b1 = -2 * c; b2 = 1 - al * A; a0 = 1 + al / A; a1 = -2 * c; a2 = 1 - al / A; } // peak
+    this.b0 = b0 / a0; this.b1 = b1 / a0; this.b2 = b2 / a0; this.a1 = a1 / a0; this.a2 = a2 / a0;
+    return this;
+  }
+  run(x) { const y = this.b0 * x + this.z1; this.z1 = this.b1 * x - this.a1 * y + this.z2; this.z2 = this.b2 * x - this.a2 * y; return y; }
+}
+
+// Horn: one harmonic series (not a chord), onset pitch overshoot, one-pole attack/release, faint air noise.
+class Horn {
+  constructor(sr, P, rng) {
+    this.sr = sr; this.P = P; this.rng = rng;
+    this.aAtk = tauCoef(sr, P.atk / 2.197); this.aRel = tauCoef(sr, P.rel / 2.197);
+    this.env = 0; this.gate = false; this.phase = 0; this.bendT = 1e9; this.jit = 0; this.jitA = tauCoef(sr, 0.08);
+    this.nf = new Biquad().set('bp', 2500, 0.6, sr); this.intensity = 0.8; this.hk = []; this.setIntensity(0.8);
+  }
+  setIntensity(v) { // louder = brighter (more pressure): tilt the upper harmonics
+    this.intensity = v; const tilt = (1 - v) * 1.6;
+    this.hk = this.P.harm.map((d, i) => db(d - tilt * i)); const s = this.hk.reduce((a, b) => a + b, 0); this.norm = 1.5 / s;
+    this.level = 0.15 + 0.85 * v;
+  }
+  setGate(on) { if (on && !this.gate && this.env < 0.35) this.bendT = 0; this.gate = on; }
+  sample() {
+    const tgt = this.gate ? 1 : 0;
+    this.env += (tgt - this.env) * (tgt > this.env ? this.aAtk : this.aRel);
+    if (!this.gate && this.env < 1e-5) { this.env = 0; return 0; }
+    const bend = this.P.bend * (0.6 + 0.4 * this.intensity) * Math.exp(-this.bendT / this.P.bendTau);
+    this.bendT += 1 / this.sr;
+    this.jit += (this.rng.next() - this.jit) * this.jitA;
+    const f = this.P.f0 * Math.pow(2, (bend + this.jit * 8) / 1200);
+    this.phase += f / this.sr; if (this.phase >= 1) this.phase -= 1;
+    const th = TWO_PI * this.phase, c2 = 2 * Math.cos(th), nyq = this.sr * 0.47;
+    let sp = 0, sk = Math.sin(th), sum = this.hk[0] * sk;
+    for (let k = 2; k <= this.hk.length && k * f < nyq; k++) { const sn = c2 * sk - sp; sp = sk; sk = sn; sum += this.hk[k - 1] * sk; }
+    const breath = this.nf.run(this.rng.next()) * (db(this.P.noise + 12) + 0.03 * Math.exp(-this.bendT / 0.05));
+    return (sum * this.norm + breath) * this.env * this.level;
+  }
+}
+
+// Bell: electronic, identical strikes every `period`; each strike is a modal bank (fitted partials and decays)
+// plus a short 5-9 kHz click, and the previous strike is faded out in ~8 ms (the dips seen before each strike).
+class Bell {
+  constructor(sr, P, rng) {
+    this.sr = sr; this.rng = rng; this.period = Math.round(P.period * sr);
+    this.parts = P.partials.map(([f, l, d]) => ({ w: TWO_PI * f / sr, a: db(l), dm: Math.pow(10, d / 20 / sr) }));
+    const s = this.parts.reduce((x, p) => x + p.a, 0); this.norm = 0.8 / s;
+    this.slots = [0, 1].map(() => ({ on: false, t: 0, fade: 1, fm: 1, re: [], im: [], cw: [], sw: [], amp: [] }));
+    for (const sl of this.slots) for (const p of this.parts) { sl.re.push(0); sl.im.push(0); sl.amp.push(0); sl.cw.push(Math.cos(p.w)); sl.sw.push(Math.sin(p.w)); }
+    this.cur = 0; this.on = false; this.ctr = 0; this.tail = -1; this.click = 0; this.clickD = Math.exp(-1 / (sr * 0.004));
+    this.cf = new Biquad().set('bp', 6500, 1.2, sr); this.level = 0.8; this.fadeFast = Math.exp(-1 / (sr * 0.0025));
+  }
+  setOn(on) {
+    if (on && !this.on) { this.ctr = 0; this.tail = -1; }
+    if (!on && this.on) this.tail = this.ctr; // ring to the end of this period, then release
+    this.on = on;
+  }
+  strike() {
+    const old = this.slots[this.cur]; if (old.on) old.fm = this.fadeFast;
+    this.cur ^= 1; const sl = this.slots[this.cur];
+    sl.on = true; sl.t = 0; sl.fade = 1; sl.fm = 1;
+    for (let i = 0; i < this.parts.length; i++) { sl.re[i] = 1; sl.im[i] = 0; sl.amp[i] = this.parts[i].a; }
+    this.click = 1;
+  }
+  sample() {
+    if (this.on) { if (this.ctr <= 0) { this.strike(); this.ctr = this.period; } this.ctr--; }
+    else if (this.tail >= 0) { if (this.tail-- === 0) { const sl = this.slots[this.cur]; sl.fm = Math.exp(-1 / (this.sr * 0.12)); } }
+    let y = 0;
+    for (const sl of this.slots) {
+      if (!sl.on) continue;
+      const att = sl.t < 48 ? sl.t / 48 : 1; sl.t++;
+      let v = 0;
+      for (let i = 0; i < this.parts.length; i++) {
+        const r = sl.re[i], m = sl.im[i];
+        sl.re[i] = r * sl.cw[i] - m * sl.sw[i]; sl.im[i] = r * sl.sw[i] + m * sl.cw[i];
+        v += sl.im[i] * sl.amp[i]; sl.amp[i] *= this.parts[i].dm;
+      }
+      if ((sl.t & 4095) === 0) for (let i = 0; i < this.parts.length; i++) { const n = Math.hypot(sl.re[i], sl.im[i]); sl.re[i] /= n; sl.im[i] /= n; }
+      sl.fade *= sl.fm; if (sl.fade < 1e-4) sl.on = false;
+      y += v * att * sl.fade;
+    }
+    if (this.click > 1e-4) { y += this.cf.run(this.rng.next()) * this.click * 0.9; this.click *= this.clickD; }
+    return y * this.norm * this.level;
+  }
+}
+
+// Door-closing warning: continuous A6 (1760 Hz) with a strong 2nd harmonic, gated.
+class Door {
+  constructor(sr, P) { this.sr = sr; this.w = TWO_PI * P.f0 / sr; this.h = P.harm.map(db); this.norm = 0.5 / this.h.reduce((a, b) => a + b, 0);
+    this.ph = 0; this.env = 0; this.gate = false; this.a = tauCoef(sr, 0.004); this.level = 0.7; }
+  sample() {
+    this.env += ((this.gate ? 1 : 0) - this.env) * this.a;
+    if (!this.gate && this.env < 1e-5) { this.env = 0; return 0; }
+    this.ph += this.w; if (this.ph > TWO_PI) this.ph -= TWO_PI;
+    let y = 0; for (let k = 0; k < this.h.length; k++) y += this.h[k] * Math.sin((k + 1) * this.ph);
+    return y * this.norm * this.env * this.level;
+  }
+}
+
+// Traction inverter / motor whine. `throttle` sets the target speed; speed follows at a limited rate. Line A
+// (0-980 Hz) is the speed proxy; the other lines are fitted functions of A (analysis/motor_fit.json).
+class Motor {
+  constructor(sr, P, rng) {
+    this.sr = sr; this.P = P; this.rng = rng; this.throttle = 0; this.speed = 0; this.load = 0; this.gain = 0;
+    this.accelTime = 14; this.coastTime = 30; this.ph = new Float64Array(9); this.f = new Float64Array(9); this.a = new Float64Array(9);
+    this.rumble = new Biquad().set('lp', 220, 0.7, sr); this.level = 0.8; this.k = 0;
+  }
+  control() { // every 64 samples
+    const dt = 64 / this.sr, P = this.P;
+    if (this.throttle > this.speed) this.speed = Math.min(this.throttle, this.speed + dt / this.accelTime);
+    else this.speed = Math.max(this.throttle, this.speed - dt / this.coastTime);
+    const motoring = this.throttle > 0.01 ? clamp(0.35 + (this.throttle - this.speed) * 3 + 0.3 * this.throttle, 0, 1) : 0.18 * ramp(this.speed, 0, 0.05);
+    this.load += (motoring - this.load) * 0.02;
+    const A = P.aMax * this.speed, C = P.cSlope * A + P.cOff, car = P.carrier + P.carSlope * A;
+    const fan = 0.2 * C * ramp(A, 20, 80);
+    const F = [A, C, car, car + fan, car - fan, car + 2 * fan, car - 2 * fan, P.bSlope * A + P.bOff, P.dSlope * A];
+    const idle = this.throttle > 0.01 || this.speed > 0.002 ? 1 : 0;
+    const Aa = [ramp(A, 60, 300), db(P.lvC) * ramp(A, 15, 60) * (1 - ramp(A, 550, 650)),
+      db(P.lvCar) * (1 - ramp(A, 500, 600)) * idle, db(P.lvCar - 6) * ramp(fan, 5, 40) * (1 - ramp(A, 500, 600)),
+      db(P.lvCar - 6) * ramp(fan, 5, 40) * (1 - ramp(A, 500, 600)), db(P.lvCar - 30) * ramp(fan, 10, 60) * (1 - ramp(A, 500, 600)),
+      db(P.lvCar - 30) * ramp(fan, 10, 60) * (1 - ramp(A, 500, 600)), db(P.lvB) * ramp(A, 500, 600), db(P.lvD) * ramp(A, 20, 120)];
+    for (let i = 0; i < 9; i++) { this.f[i] = F[i]; this.a[i] += (Aa[i] - this.a[i]) * 0.05; }
+    this.gain += (this.load - this.gain) * 0.05;
+  }
+  sample() {
+    if ((this.k++ & 63) === 0) this.control();
+    if (this.gain < 1e-4 && this.speed < 1e-4) return 0;
+    let y = 0;
+    for (let i = 0; i < 9; i++) {
+      if (this.a[i] < 1e-5 || this.f[i] <= 0 || this.f[i] > this.sr * 0.45) continue;
+      this.ph[i] += this.f[i] / this.sr; if (this.ph[i] >= 1) this.ph[i] -= 1;
+      y += this.a[i] * Math.sin(TWO_PI * this.ph[i]);
+    }
+    const r = this.rumble.run(this.rng.next()) * 0.12 * this.speed;
+    return (y * 0.22 * this.gain + r) * this.level;
+  }
+}
+
+// Air release: broadband hiss (strongest 2.5-4 kHz) with a faint 7.2 kHz whistle; a one-shot of `dur` s.
+class Hiss {
+  constructor(sr, P, rng) {
+    this.sr = sr; this.P = P; this.rng = rng; this.t = -1; this.ph = 0;
+    this.hp = new Biquad().set('hp', 1800, 0.7, sr); this.pk = new Biquad().set('peak', 3200, 0.8, sr, 8);
+    this.lp = new Biquad().set('lp', 12000, 0.7, sr); this.level = 0.7;
+  }
+  trigger() { this.t = 0; }
+  sample() {
+    if (this.t < 0) return 0;
+    const t = this.t / this.sr, d = this.P.dur; this.t++;
+    if (t > d + 0.8) { this.t = -1; return 0; }
+    const env = Math.min(1, t / 0.08) * (t < d ? 1 - 0.25 * t / d : 0.75 * Math.exp(-(t - d) / 0.18));
+    const n = this.lp.run(this.pk.run(this.hp.run(this.rng.next())));
+    this.ph += this.P.whistle / this.sr; if (this.ph >= 1) this.ph -= 1;
+    return (n * 0.35 + 0.02 * Math.sin(TWO_PI * this.ph)) * env * this.level;
+  }
+}
+
+// Brake squeal: a wobbling ~2150 Hz tone (smoothed random frequency walk) with a weaker upper partial.
+class Squeal {
+  constructor(sr, P, rng) { this.sr = sr; this.P = P; this.rng = rng; this.t = -1; this.ph = 0; this.ph2 = 0; this.w = 0; this.wv = 0; this.level = 0.5; }
+  trigger() { this.t = 0; }
+  sample() {
+    if (this.t < 0) return 0;
+    const t = this.t / this.sr, d = this.P.dur; this.t++;
+    if (t > d) { this.t = -1; return 0; }
+    this.wv += (this.rng.next() * 0.6 - this.wv) * 0.0006; this.w += (this.wv - this.w) * 0.0015;
+    const f = this.P.f + this.w * this.P.wobble * 4;
+    this.ph += f / this.sr; if (this.ph >= 1) this.ph -= 1;
+    this.ph2 += 1.44 * f / this.sr; if (this.ph2 >= 1) this.ph2 -= 1;
+    const env = Math.min(1, t / 0.3) * Math.min(1, (d - t) / 0.4) * (0.7 + 0.3 * Math.sin(TWO_PI * 1.7 * t));
+    return (Math.sin(TWO_PI * this.ph) + 0.25 * Math.sin(TWO_PI * this.ph2)) * 0.4 * env * this.level;
+  }
+}
+
+class KissEngine {
+  constructor(sr, seed = 12345) {
+    const rng = new Rng(seed), P = KISS_PARAMS; this.sr = sr;
+    this.horn = new Horn(sr, P.horn, rng); this.bell = new Bell(sr, P.bell, rng); this.door = new Door(sr, P.door);
+    this.motor = new Motor(sr, P.motor, rng); this.hiss = new Hiss(sr, P.hiss, rng); this.squeal = new Squeal(sr, P.squeal, rng);
+    this.master = 0.8; this.masterS = 0.8; this.pattern = []; this.t = 0; this.manualHorn = false; this.patternOn = false;
+  }
+  // Messages: {t:'horn',on} {t:'bell',on} {t:'door',on} {t:'throttle',v} {t:'hiss'} {t:'squeal'}
+  //           {t:'intensity',k,v} {t:'master',v} {t:'accel',v} {t:'pattern',seq:[[startS,durS],...]} {t:'stopPattern'}
+  msg(m) {
+    switch (m.t) {
+      case 'horn': this.manualHorn = !!m.on; break;
+      case 'bell': this.bell.setOn(!!m.on); break;
+      case 'door': this.door.gate = !!m.on; break;
+      case 'throttle': this.motor.throttle = clamp(+m.v, 0, 1); break;
+      case 'accel': this.motor.accelTime = clamp(+m.v, 1, 120); break;
+      case 'hiss': this.hiss.trigger(); break;
+      case 'squeal': this.squeal.trigger(); break;
+      case 'master': this.master = clamp(+m.v, 0, 1.5); break;
+      case 'intensity': {
+        const v = clamp(+m.v, 0, 1);
+        if (m.k === 'horn') this.horn.setIntensity(v); else if (m.k === 'bell') this.bell.level = v;
+        else if (m.k === 'motor') this.motor.level = v; else if (m.k === 'door') this.door.level = v;
+        else if (m.k === 'hiss') { this.hiss.level = v; this.squeal.level = v * 0.7; }
+        break;
+      }
+      case 'pattern': this.pattern = m.seq.map(([s, d]) => [this.t + Math.round(s * this.sr), this.t + Math.round((s + d) * this.sr)]); break;
+      case 'stopPattern': this.pattern = []; break;
+    }
+  }
+  render(out, n) {
+    for (let i = 0; i < n; i++) {
+      let pat = false;
+      if (this.pattern.length) {
+        while (this.pattern.length && this.t >= this.pattern[0][1]) this.pattern.shift();
+        pat = this.pattern.length > 0 && this.t >= this.pattern[0][0];
+      }
+      this.horn.setGate(this.manualHorn || pat);
+      this.masterS += (this.master - this.masterS) * 0.001;
+      const x = this.horn.sample() + this.bell.sample() + this.door.sample() + this.motor.sample() + this.hiss.sample() + this.squeal.sample();
+      const v = x * this.masterS, av = Math.abs(v); // linear below 0.6, soft knee above
+      out[i] = av < 0.6 ? v : Math.sign(v) * (0.6 + 0.4 * Math.tanh((av - 0.6) / 0.4));
+      this.t++;
+    }
+  }
+  state() { return { speed: this.motor.speed, A: this.motor.speed * KISS_PARAMS.motor.aMax, patternBusy: this.pattern.length > 0 }; }
+}
+</script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const ENGINE_SRC = $('kiss-engine').textContent;
+  const PATTERNS = [
+    { name: 'Crossing', sig: '– – o –', seq: [[0, 2.0], [2.6, 2.0], [5.2, 0.7], [6.4, 3.5]] },
+    { name: 'Proceed', sig: '– –', seq: [[0, 1.6], [2.1, 1.6]] },
+    { name: 'Acknowledge', sig: 'o o', seq: [[0, 0.5], [0.9, 0.5]] },
+    { name: 'Approaching', sig: '–', seq: [[0, 2.5]] },
+    { name: 'Backing up', sig: 'o o o', seq: [[0, 0.5], [0.9, 0.5], [1.8, 0.5]] },
+    { name: 'Horn show', sig: 'o o – o –', seq: [[0, 0.35], [0.6, 0.35], [1.2, 1.4], [3.0, 0.35], [3.6, 2.2]] },
+  ];
+
+  // ---------- audio ----------
+  let ctx = null, node = null, direct = null, starting = null, queue = [], state = { speed: 0, A: 0 };
+  const send = (m) => { if (node && node.port) node.port.postMessage(m); else if (direct) direct.msg(m); else queue.push(m); };
+  function unlockIOS() { // a one-sample buffer played inside the gesture unlocks output on older iOS
+    try { const b = ctx.createBuffer(1, 1, ctx.sampleRate), s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0); } catch (e) {}
+  }
+  function ensureAudio() {
+    if (ctx) { if (ctx.state !== 'running') ctx.resume(); return starting; }
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { setStatus('No Web Audio', false); return Promise.resolve(); }
+    ctx = new AC({ latencyHint: 'interactive' });
+    ctx.resume(); unlockIOS();
+    starting = (async () => {
+      try {
+        if (!ctx.audioWorklet) throw new Error('no worklet');
+        const code = ENGINE_SRC + `
+          class KissProc extends AudioWorkletProcessor {
+            constructor() { super(); this.e = new KissEngine(sampleRate); this.n = 0;
+              this.port.onmessage = (ev) => this.e.msg(ev.data); }
+            process(inp, out) { const o = out[0]; this.e.render(o[0], o[0].length); for (let c = 1; c < o.length; c++) o[c].set(o[0]);
+              if ((this.n++ & 15) === 0) this.port.postMessage(this.e.state()); return true; }
+          }
+          registerProcessor('kiss-engine', KissProc);`;
+        // blob: works when served (and in sandboxed viewers); data: covers file:// pages, where blob: has a null origin
+        const urls = [() => URL.createObjectURL(new Blob([code], { type: 'application/javascript' })),
+                      () => 'data:application/javascript;base64,' + btoa(unescape(encodeURIComponent(code)))];
+        let loaded = false;
+        for (const mk of urls) { try { await ctx.audioWorklet.addModule(mk()); loaded = true; break; } catch (e) {} }
+        if (!loaded) throw new Error('worklet module did not load');
+        node = new AudioWorkletNode(ctx, 'kiss-engine', { numberOfInputs: 0, outputChannelCount: [2] });
+        node.port.onmessage = (ev) => { state = ev.data; };
+        node.connect(ctx.destination);
+        document.documentElement.dataset.audioPath = 'worklet';
+      } catch (err) { // fallback: ScriptProcessor on the main thread
+        const KissEngine = new Function(ENGINE_SRC + '\nreturn KissEngine;')();
+        direct = new KissEngine(ctx.sampleRate);
+        const sp = ctx.createScriptProcessor(1024, 0, 1);
+        sp.onaudioprocess = (ev) => { const o = ev.outputBuffer.getChannelData(0); direct.render(o, o.length); state = direct.state(); };
+        sp.connect(ctx.destination); node = null;
+        document.documentElement.dataset.audioPath = 'script-processor';
+      }
+      const q = queue; queue = []; applyMix(); q.forEach(send);
+      setStatus('Live', true);
+      wake();
+    })();
+    return starting;
+  }
+  function setStatus(t, live) { const s = $('status'); s.textContent = t; s.classList.toggle('live', !!live); }
+  let lock = null;
+  async function wake() { try { if ('wakeLock' in navigator && document.visibilityState === 'visible') lock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') { wake(); if (ctx && ctx.state !== 'running') ctx.resume(); }
+    else { hornUp(); doorOff(); } // never leave the horn or door tone stuck on
+  });
+
+  // ---------- settings ----------
+  const MIX = [['vMaster', 'master'], ['vHorn', 'horn'], ['vBell', 'bell'], ['vMotor', 'motor'], ['vDoor', 'door'], ['vHiss', 'hiss']];
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('kiss-mix') || '{}'); } catch (e) {}
+  for (const [id] of MIX) if (saved[id] != null) $(id).value = saved[id];
+  if (saved.accel) $('accel').value = saved.accel;
+  function applyMix() {
+    const s = {};
+    for (const [id, k] of MIX) {
+      const v = +$(id).value; s[id] = v; $('o' + id.slice(1)).textContent = v + ' %';
+      if (k === 'master') send({ t: 'master', v: 1.1 * v / 100 }); else send({ t: 'intensity', k, v: v / 100 });
+    }
+    s.accel = $('accel').value; send({ t: 'accel', v: +s.accel });
+    try { localStorage.setItem('kiss-mix', JSON.stringify(s)); } catch (e) {}
+  }
+  for (const [id] of MIX) $(id).addEventListener('input', applyMix);
+  $('accel').addEventListener('change', applyMix);
+  applyMix();
+
+  // ---------- controls ----------
+  const hornBtn = $('horn');
+  let hornHeld = false;
+  function hornDown() { ensureAudio(); if (hornHeld) return; hornHeld = true; send({ t: 'stopPattern' }); send({ t: 'horn', on: true }); hornBtn.classList.add('down'); }
+  function hornUp() { if (!hornHeld) return; hornHeld = false; send({ t: 'horn', on: false }); hornBtn.classList.remove('down'); }
+  function holdButton(el, down, up) {
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (_) {} down(); });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, up);
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    el.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); down(); } });
+    el.addEventListener('keyup', (e) => { if (e.key === 'Enter' || e.key === ' ') up(); });
+  }
+  holdButton(hornBtn, hornDown, hornUp);
+
+  let bellOn = false;
+  const bellBtn = $('bell');
+  function toggleBell() { ensureAudio(); bellOn = !bellOn; send({ t: 'bell', on: bellOn }); bellBtn.classList.toggle('on', bellOn); bellBtn.setAttribute('aria-pressed', bellOn); $('lampBell').classList.toggle('on', bellOn); }
+  bellBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); toggleBell(); });
+  bellBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!e.repeat) toggleBell(); } });
+
+  const doorBtn = $('door');
+  let doorT0 = 0, doorTimer = null, doorOnState = false;
+  function doorSet(on) { doorOnState = on; send({ t: 'door', on }); doorBtn.classList.toggle('on', on); doorBtn.setAttribute('aria-pressed', on); $('lampDoor').classList.toggle('on', on); }
+  function doorDown() { ensureAudio(); clearTimeout(doorTimer); doorT0 = performance.now(); doorSet(true); }
+  function doorUp() { if (!doorOnState) return; const held = performance.now() - doorT0; clearTimeout(doorTimer);
+    if (held < 350) doorTimer = setTimeout(() => doorSet(false), 3000 - held); else doorSet(false); }
+  function doorOff() { clearTimeout(doorTimer); if (doorOnState) doorSet(false); }
+  holdButton(doorBtn, doorDown, doorUp);
+
+  function oneShot(el, t) {
+    const fire = () => { ensureAudio(); send({ t }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); };
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); fire(); });
+    el.addEventListener('keydown', (e) => { if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) { e.preventDefault(); fire(); } });
+  }
+  oneShot($('air'), 'hiss'); oneShot($('squeal'), 'squeal');
+
+  const pbox = $('patterns'); let patTimer = null;
+  function playPattern(i, el) {
+    ensureAudio(); const p = PATTERNS[i]; send({ t: 'pattern', seq: p.seq });
+    document.querySelectorAll('.pat').forEach((b) => b.classList.remove('busy')); el.classList.add('busy');
+    const end = Math.max(...p.seq.map(([s, d]) => s + d)); clearTimeout(patTimer); patTimer = setTimeout(() => el.classList.remove('busy'), end * 1000 + 300);
+  }
+  PATTERNS.forEach((p, i) => {
+    const b = document.createElement('button'); b.className = 'pat'; b.id = 'pat' + i;
+    b.innerHTML = `<b>${p.name}</b><code>${p.sig}</code>`; b.setAttribute('aria-label', p.name + ' horn signal ' + p.sig);
+    b.addEventListener('pointerdown', (e) => { e.preventDefault(); playPattern(i, b); });
+    b.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!e.repeat) playPattern(i, b); } });
+    pbox.appendChild(b);
+  });
+
+  const thr = $('throttle');
+  function setThrottle(v) { thr.value = v; $('thrOut').textContent = v + ' %'; send({ t: 'throttle', v: v / 100 }); }
+  thr.addEventListener('pointerdown', () => ensureAudio());
+  thr.addEventListener('input', () => { ensureAudio(); setThrottle(+thr.value); });
+
+  // keyboard (desktop)
+  const held = {};
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key.toLowerCase(); if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return;
+    if (k === ' ' || k === 'h') { e.preventDefault(); held[k] = true; hornDown(); }
+    else if (k === 'b') toggleBell();
+    else if (k === 'd') doorDown();
+    else if (k === 'a') $('air').dispatchEvent(new PointerEvent('pointerdown'));
+    else if (k === 's') $('squeal').dispatchEvent(new PointerEvent('pointerdown'));
+    else if (k === 'arrowup') { e.preventDefault(); ensureAudio(); setThrottle(Math.min(100, +thr.value + 10)); }
+    else if (k === 'arrowdown') { e.preventDefault(); ensureAudio(); setThrottle(Math.max(0, +thr.value - 10)); }
+    else if (k === '0') setThrottle(0);
+    else if (k >= '1' && k <= '6') playPattern(+k - 1, $('pat' + (+k - 1)));
+  });
+  window.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === ' ' || k === 'h') { held[k] = false; if (!held[' '] && !held.h) hornUp(); }
+    else if (k === 'd') doorUp();
+  });
+  window.addEventListener('blur', () => { hornUp(); });
+
+  // cab display
+  function tick() {
+    $('mph').textContent = Math.round(state.speed * 79);
+    $('hz').textContent = Math.round(state.A);
+    $('lampHorn').classList.toggle('on', hornHeld || !!state.patternBusy);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>

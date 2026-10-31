@@ -1,0 +1,18 @@
+# systemd user unit for the Caltreat web app. deploy.sh installs it to
+# ~/.config/systemd/user/ on the Pi. Linger is enabled for the caltreat user,
+# so this starts at boot without anyone logging in.
+[Unit]
+Description=Caltreat train lights and sound web app (port 8080)
+After=sound.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/caltreat
+# Same as `poetry run python -m caltreat`, without needing poetry at runtime.
+ExecStart=%h/caltreat/.venv/bin/python -m caltreat
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

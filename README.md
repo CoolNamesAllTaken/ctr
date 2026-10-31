@@ -11,3 +11,7 @@ Postgres) and a Next.js frontend. See [`website/README.md`](website/README.md)
 for setup, and
 [`website/backend/core/models.py`](website/backend/core/models.py) for the data
 model.
+
+The train's Raspberry Pi runs the light and sound controls at
+http://caltreat.local:8080/. That code lives in [`pi/`](pi/). See
+[`pi/README.md`](pi/README.md) for how to deploy it.
