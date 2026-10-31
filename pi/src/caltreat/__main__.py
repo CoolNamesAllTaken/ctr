@@ -2865,14 +2865,27 @@ def slider(label, lo, hi, value, on_change, title=None, unit="%", step=1):
     r = el("input", "", type="range", min=lo, max=hi, step=step, value=value)
     r.props(f'aria-label="{_esc(label)}"')
 
+    # Every update to the page re-renders it, and Vue then puts the input's `value` prop back into the slider: keep
+    # that prop (in the browser and here) at what the user chose, or the slider snaps back to its first value.
+    keep_js = f"mounted_app.elements[{r.id}].props.value = e.target.value; "
+
+    def keep(v):
+        with r._props.suspend_updates():
+            r._props["value"] = v
+
     def changed(v):
+        keep(v)
         v = float(v)
         v = int(v) if float(step).is_integer() else v
         out.set_content(f"{v} {unit}")
         on_change(v)
 
-    r.on("input", lambda e: out.set_content(f"{e.args} {unit}"), js_handler="(e) => emit(e.target.value)")
-    r.on("change", lambda e: changed(e.args), js_handler="(e) => emit(e.target.value)")
+    def moved(v):
+        keep(v)
+        out.set_content(f"{v} {unit}")
+
+    r.on("input", lambda e: moved(e.args), js_handler=f"(e) => {{ {keep_js}emit(e.target.value) }}")
+    r.on("change", lambda e: changed(e.args), js_handler=f"(e) => {{ {keep_js}emit(e.target.value) }}")
     return r
 
 
