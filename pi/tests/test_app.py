@@ -38,7 +38,13 @@ def latest(name):
 
 def file_pos(written, t):
     """Engine sample clock -> sample index in a fake card's recording (blocks dropped or padded are accounted)."""
-    bt, bi = max((w for w in written if w[0] is not None and w[0] <= t), key=lambda w: w[0])
+    while True:  # the audio thread appends while we read: copy it first (a copy can still race; retry)
+        try:
+            snap = list(written)
+            break
+        except RuntimeError:
+            continue
+    bt, bi = max((w for w in snap if w[0] is not None and w[0] <= t), key=lambda w: w[0])
     return bi * m.BLOCK + (t - bt)
 
 
@@ -49,9 +55,11 @@ def rms(x):
 @pytest.fixture(scope="module")
 def running():
     assert hw.FAKE and hw.usb_outputs() == [("Device", "1.2"), ("Device_1", "1.3")]
-    m.cfg.data["speakers"] = {"front": {"device": "jack", "ch": "both", "level": 100},
-                              "inside": {"device": "usb:1.3", "ch": "right", "level": 100},
-                              "rear": {"device": "usb#1", "ch": "left", "level": 50}}
+    m.cfg.data["direction"] = "A"  # car A leads: A ext plays the front mix, B ext the rear
+    m.cfg.data["speakers"] = {"a_ext": {"device": "jack", "ch": "both", "level": 100},
+                              "a_int": {"device": "usb:1.3", "ch": "right", "level": 100},
+                              "b_ext": {"device": "usb#1", "ch": "left", "level": 50},
+                              "b_int": {"device": "none", "ch": "both", "level": 100}}
     m.cfg.data["intercom"]["duck_db"] = -18
     m.cfg.save()
     if m.sidecar:
@@ -67,7 +75,7 @@ def running():
 def test_speakers_route_to_their_card_and_channel(running):
     assert wait_for(lambda: set(m.router.devices) == {"jack", "usb:1.3", "usb:1.2"} and
                     all(d.ok for d in m.router.devices.values()))
-    assert m.router.status["inside"]["card"] == "Device_1" and m.router.status["rear"]["card"] == "Device"
+    assert m.router.status["a_int"]["card"] == "Device_1" and m.router.status["b_ext"]["card"] == "Device"
     m.audio.hold("test", True)
     time.sleep(1.0)
     m.audio.hold("test", False)
@@ -151,6 +159,12 @@ def board():
     m.finder.start()
     m.io.start()
     assert wait_for(lambda: any(x.uid == UID and x.connected for x in m.finder.found), 15)
+    # board "A" comes with car A's lamps on GP0-GP3 (cars.py); these tests map pins themselves
+    outs = m.cfg.data["boards"][UID]["outputs"]
+    assert [o["fn"] for o in outs[:4]] == ["a_ditch_l", "a_ditch_r", "a_head", "a_markers"]
+    for o in outs:
+        o["fn"] = None
+    m.cfg.save()
     yield b
     m.io.stop()
     m.finder.stop()
@@ -198,20 +212,25 @@ def test_doors_function_follows_the_doors(running, board):
 
 
 def test_flash_alternates_phases_and_relays(board):
+    m.cfg.data["functions"].append({"id": "flashy", "name": "Flashy", "kind": "manual", "symbol": "●"})
     outs = m.cfg.data["boards"][UID]["outputs"]
-    outs[0], outs[1] = {"fn": "markers", "alt": False}, {"fn": "markers", "alt": True}
+    outs[0], outs[1] = {"fn": "flashy", "alt": False}, {"fn": "flashy", "alt": True}
+    relay = m.cfg.data["relay"]
+    saved_relay = [dict(o) for o in relay]
+    relay[2], relay[3] = {"fn": "flashy", "alt": False}, {"fn": "flashy", "alt": True}
     m.cfg.save()
-    m.io.set_mode("markers", "flash")
+    m.io.set_mode("flashy", "flash")
     states = set()
     end = time.monotonic() + 1.5
     while time.monotonic() < end:
         states.add((board.coils[0], board.coils[1], tuple(m.io.relay_state[2:4])))
         time.sleep(0.05)
     assert {(True, False), (False, True)} <= {s[:2] for s in states}  # A and B alternate
-    assert {(True, False), (False, True)} <= {s[2] for s in states}  # default relays R3/R4 = markers A/B
-    m.io.set_mode("markers", "off")
-    # relay 1 = headlights A: unmapping it hands it to the by-hand switch
-    m.io.set_mode("head", "on")
+    assert {(True, False), (False, True)} <= {s[2] for s in states}  # relays R3/R4 as phases A/B
+    m.io.set_mode("flashy", "off")
+    relay[:] = saved_relay
+    m.cfg.save()
+    # relay 1 = car A's headlight, on while A leads: unmapping it hands it to the by-hand switch
     assert wait_for(lambda: m.io.relay_state[0])
     m.cfg.data["relay"][0] = {"fn": None, "alt": False}
     m.cfg.save()
@@ -219,7 +238,8 @@ def test_flash_alternates_phases_and_relays(board):
     m.io.toggle_output(("relay", 0))
     assert wait_for(lambda: m.io.relay_state[0])
     m.io.toggle_output(("relay", 0))
-    m.io.set_mode("head", "off")
+    m.cfg.data["relay"][0] = {"fn": "a_head", "alt": False}
+    m.cfg.save()
 
 
 def test_force_test_and_unmapped_toggle(board):

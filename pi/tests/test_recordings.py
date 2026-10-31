@@ -158,9 +158,11 @@ def test_router_plays_recording_on_its_speaker():
     import caltreat.__main__ as m
 
     fake = Path(os.environ["CALTREAT_FAKE_AUDIO"])
-    m.cfg.data["speakers"] = {"front": {"device": "jack", "ch": "both", "level": 100},
-                              "inside": {"device": "usb:1.3", "ch": "right", "level": 100},
-                              "rear": {"device": "usb#1", "ch": "left", "level": 50}}
+    m.cfg.data["direction"] = "A"
+    m.cfg.data["speakers"] = {"a_ext": {"device": "jack", "ch": "both", "level": 100},
+                              "a_int": {"device": "usb:1.3", "ch": "right", "level": 100},
+                              "b_ext": {"device": "usb#1", "ch": "left", "level": 50},
+                              "b_int": {"device": "none", "ch": "both", "level": 100}}
     store = rec.Store(m.cfg)
     r = store.add("t", tone(f=1000, amp=0.5, secs=3))
     store.update(r["id"], speakers=["rear"], level=100)
