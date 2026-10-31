@@ -35,5 +35,7 @@ export async function apiFetch<T>(
       `API ${response.status} ${response.statusText}: ${path}`,
     );
   }
+  // Deletes answer 204 No Content.
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }

@@ -21,7 +21,7 @@ export type Train = {
 
 export const DIRECTION_LABELS: Record<Direction, string> = {
   northbound: "Northbound (towards San Francisco)",
-  southbound: "Southbound (towards Mountain View)",
+  southbound: "Southbound (towards San Jose)",
 };
 
 // Money comes from the API as decimal strings, e.g. "6.25".
@@ -35,10 +35,11 @@ export type Rider = {
 };
 
 export type Kiosk = {
-  id: number;
+  id: string;
   name: string;
-  station_id: number;
-  station_name: string;
+  // Unset for a kiosk that has tapped but not been assigned a station yet.
+  station_id: number | null;
+  station_name: string | null;
 };
 
 export type Tap = {
@@ -117,7 +118,7 @@ export type LiveMap = {
   trains: LiveTrain[];
 };
 
-export type TrainState = "stopped" | "moving" | "out_of_service";
+export type TrainState = "stopped" | "moving" | "out_of_service" | "canceled";
 
 // Today's run of a train with what the conductor last marked it. The status
 // fields are all null while it's following the timetable.

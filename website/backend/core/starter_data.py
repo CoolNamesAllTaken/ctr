@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from django.db import transaction
+from django.utils.text import slugify
 
 from core.models import Kiosk, Station, TrainCar
 
@@ -34,7 +35,9 @@ def load_starter_data(path=STARTER_DATA_PATH):
         created["stations"] += was_created
         for kiosk_name in entry["kiosks"]:
             _, was_created = Kiosk.objects.get_or_create(
-                station=station, name=kiosk_name
+                station=station,
+                name=kiosk_name,
+                defaults={"id": slugify(f"{station.name} {kiosk_name}")},
             )
             created["kiosks"] += was_created
 

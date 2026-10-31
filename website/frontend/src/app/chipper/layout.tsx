@@ -80,7 +80,7 @@ export default function ChipperLayout({ children }: LayoutProps<"/chipper">) {
         </div>
         <div className="border-t border-[#dbe6f4] text-[#5f6b7a]">
           <p className="mx-auto w-full max-w-[1120px] px-4 py-5 text-sm">
-            Chipper Card is the fare card for Caltreat, Mountain View to San
+            Chipper Card is the fare card for Caltreat, San Jose to San
             Francisco.
           </p>
         </div>

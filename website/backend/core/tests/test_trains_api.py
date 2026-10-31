@@ -11,7 +11,7 @@ def car():
 @pytest.fixture
 def stations():
     return [
-        Station.objects.create(name="Mountain View", zone=1, position=0),
+        Station.objects.create(name="San Jose", zone=1, position=0),
         Station.objects.create(name="San Francisco", zone=2, position=1),
     ]
 
@@ -39,7 +39,7 @@ def test_create_train(client, car, stations):
     body = response.json()
     assert body["name"] == "101"
     assert [(a["station_name"], a["time"]) for a in body["arrivals"]] == [
-        ("Mountain View", "20:15:00"),
+        ("San Jose", "20:15:00"),
         ("San Francisco", "20:30:00"),
     ]
     train = Train.objects.get()

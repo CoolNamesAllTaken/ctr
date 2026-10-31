@@ -19,7 +19,7 @@ class Train(models.Model):
 
     class Direction(models.TextChoices):
         NORTHBOUND = "northbound", "Northbound (towards San Francisco)"
-        SOUTHBOUND = "southbound", "Southbound (towards Mountain View)"
+        SOUTHBOUND = "southbound", "Southbound (towards San Jose)"
 
     name = models.CharField(max_length=100)
     direction = models.CharField(max_length=20, choices=Direction.choices)
@@ -34,7 +34,7 @@ class Train(models.Model):
 class Station(models.Model):
     name = models.CharField(max_length=100, unique=True)
     zone = models.PositiveSmallIntegerField()
-    # Order along the line, counting up from Mountain View (south) to
+    # Order along the line, counting up from San Jose (south) to
     # San Francisco (north).
     position = models.PositiveSmallIntegerField(unique=True)
 
@@ -113,11 +113,16 @@ class TrainStatus(models.Model):
         STOPPED = "stopped", "Stopped at a station"
         MOVING = "moving", "Moving to the next stop"
         OUT_OF_SERVICE = "out_of_service", "Out of service"
+        CANCELED = "canceled", "Canceled"
+
+    # States with no station, which leave the train off the live map.
+    OFF_THE_LINE = (State.OUT_OF_SERVICE, State.CANCELED)
 
     train = models.ForeignKey(Train, on_delete=models.CASCADE, related_name="statuses")
     date = models.DateField()
     state = models.CharField(max_length=20, choices=State.choices)
-    # Where it's stopped, or the stop it last left. Unset when out of service.
+    # Where it's stopped, or the stop it last left. Unset when out of service
+    # or canceled.
     station = models.ForeignKey(
         Station,
         on_delete=models.CASCADE,
@@ -175,11 +180,19 @@ class Rider(models.Model):
 
 
 class Kiosk(models.Model):
-    """A card-tap kiosk; a station can have several."""
+    """A card-tap kiosk; a station can have several. A kiosk is registered the
+    first time it reports a tap, with no station until an employee assigns
+    one."""
 
+    # The kiosk's own ID, which it sends with every tap.
+    id = models.CharField(primary_key=True, max_length=64)
     name = models.CharField(max_length=100)
     station = models.ForeignKey(
-        Station, on_delete=models.PROTECT, related_name="kiosks"
+        Station,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="kiosks",
     )
 
     class Meta:
@@ -190,7 +203,7 @@ class Kiosk(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.name} at {self.station}"
+        return f"{self.name} at {self.station or 'no station'}"
 
 
 class KioskTap(models.Model):

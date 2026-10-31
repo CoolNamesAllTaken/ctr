@@ -27,6 +27,8 @@ async function TapSimulator() {
   }
   const [riders, kiosks, taps] = data;
   const ridersWithCards = riders.filter((rider) => rider.card_uid);
+  // A kiosk can't charge fares until it's assigned a station.
+  const kiosksAtStations = kiosks.filter((kiosk) => kiosk.station_id !== null);
 
   return (
     <>
@@ -38,14 +40,15 @@ async function TapSimulator() {
           station cancels the trip with a full refund. A rider who forgets to
           tap off pays the maximum fare.
         </p>
-        {ridersWithCards.length === 0 || kiosks.length === 0 ? (
+        {ridersWithCards.length === 0 || kiosksAtStations.length === 0 ? (
           <p className={mutedClass}>
-            You need a rider with a Chipper card and at least one kiosk. Set up
-            a card on the Chipper cards tab, and load the starter data on the
-            Trains tab for kiosks.
+            You need a rider with a Chipper card and at least one kiosk at a
+            station. Set up a card on the Chipper cards tab, and assign a kiosk
+            to a station on the Stations &amp; kiosks tab (or load the starter
+            data on the Trains tab).
           </p>
         ) : (
-          <TapForm riders={ridersWithCards} kiosks={kiosks} />
+          <TapForm riders={ridersWithCards} kiosks={kiosksAtStations} />
         )}
       </section>
 

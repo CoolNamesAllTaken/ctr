@@ -5,7 +5,7 @@
   ],
   "stations": [
     {
-      "name": "Mountain View",
+      "name": "San Jose",
       "zone": 2,
       "position": 0,
       "kiosks": ["Northbound platform", "Southbound platform"]

@@ -66,7 +66,7 @@ export default function RiderLayout({
       <main className="flex flex-1 flex-col">{children}</main>
 
       <footer className="py-6 text-center text-sm text-[#515151]">
-        Caltreat · Mountain View to San Francisco
+        Caltreat · San Jose to San Francisco
       </footer>
     </div>
   );
