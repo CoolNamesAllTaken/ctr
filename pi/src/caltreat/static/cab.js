@@ -29,7 +29,24 @@ window.ct = (() => {
   function setThr(v) { $('throttle').value = v; $('thrOut').textContent = v + ' %'; }
 
   // ---------- push-to-talk ----------
-  const IC = { on: false, ws: null, ctx: null, src: null, node: null, stream: null, seq: 0, idle: null, queue: [] };
+  const IC = { on: false, ws: null, ctx: null, src: null, node: null, stream: null, seq: 0, idle: null, queue: [], ready: null, gen: 0 };
+  // Microphone + worklet, set up once and shared: a press while an earlier one is still starting waits for the same
+  // setup (two setups at once made the second press's worklet node fail and drop the talk).
+  function micReady() {
+    if (!IC.ready) IC.ready = (async () => {
+      IC.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: !cfg.raw, autoGainControl: !cfg.raw, channelCount: 1 } });
+      IC.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+      await IC.ctx.audioWorklet.addModule('/static/mic-worklet.js');
+      IC.src = IC.ctx.createMediaStreamSource(IC.stream);
+      IC.sink = IC.ctx.createGain(); IC.sink.gain.value = 0; IC.sink.connect(IC.ctx.destination);
+    })().catch((err) => { micClose(); throw err; });
+    return IC.ready;
+  }
+  function micClose() {
+    IC.ready = null;
+    if (IC.stream) IC.stream.getTracks().forEach((t) => t.stop()); IC.stream = null;
+    if (IC.ctx) IC.ctx.close(); IC.ctx = null;
+  }
   function talkPaint() {
     const b = $('talk'); if (!b) return;
     b.classList.toggle('insecure', !window.isSecureContext);
@@ -46,16 +63,11 @@ window.ct = (() => {
     if (!window.isSecureContext) { if (cfg.https) location.href = cfg.https; return; }
     if (S.talk === 'busy') return;
     IC.on = true; IC.live = false; IC.queue = []; clearTimeout(IC.idle); talkPaint();
+    const gen = ++IC.gen;
     try {
-      if (!IC.stream) IC.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: !cfg.raw, autoGainControl: !cfg.raw, channelCount: 1 } });
-      if (!IC.ctx) {
-        IC.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
-        await IC.ctx.audioWorklet.addModule('/static/mic-worklet.js');
-        IC.src = IC.ctx.createMediaStreamSource(IC.stream);
-        IC.sink = IC.ctx.createGain(); IC.sink.gain.value = 0; IC.sink.connect(IC.ctx.destination);
-      }
+      await micReady();
       await IC.ctx.resume();
-      if (!IC.on) return; // released while starting
+      if (!IC.on || gen !== IC.gen) return; // released (or released and pressed again) while starting
       const node = new AudioWorkletNode(IC.ctx, 'caltreat-mic'); IC.node = node;
       node.port.onmessage = (ev) => {
         if (IC.node !== node) return;
@@ -74,6 +86,7 @@ window.ct = (() => {
       };
       ws.onclose = () => { if (IC.ws === ws) talkUp(); };
     } catch (err) {
+      if (gen !== IC.gen) return; // a later press owns the button now
       const b = $('talk'); if (b) b.title = 'Microphone: ' + (err && err.message || err);
       document.documentElement.dataset.talkError = String(err && err.message || err);
       talkUp();
@@ -81,12 +94,12 @@ window.ct = (() => {
   }
   function talkUp() {
     if (!IC.on) return;
-    IC.on = false; IC.live = false; IC.queue = [];
+    IC.on = false; IC.live = false; IC.queue = []; IC.gen++;
     if (IC.node) { try { IC.node.port.postMessage('stop'); IC.src.disconnect(IC.node); IC.node.disconnect(); } catch (_) {} IC.node = null; }
     if (IC.ws) { const ws = IC.ws; IC.ws = null; try { ws.close(); } catch (_) {} }
     level(0); talkPaint();
     clearTimeout(IC.idle); // keep the microphone open a little while for the next press, then let it go
-    IC.idle = setTimeout(() => { if (IC.on) return; if (IC.stream) IC.stream.getTracks().forEach((t) => t.stop()); IC.stream = null; if (IC.ctx) IC.ctx.close(); IC.ctx = null; }, 20000);
+    IC.idle = setTimeout(() => { if (!IC.on) micClose(); }, 20000);
   }
 
   // ---------- state from the Pi ----------
