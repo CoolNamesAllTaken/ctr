@@ -1040,7 +1040,7 @@ import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 from nicegui import app, run, ui
 
-from . import hw, lcfw, lcfw_ui
+from . import hw, lcfw, lcfw_ui, recordings, recordings_ui, theme
 from .config import (
     BOARD_PINS,
     BUILTIN_FUNCTIONS,
@@ -1775,6 +1775,7 @@ class Router:
         self.test_pos = 0
         self.test_env = 0.0
         self.duck = 1.0
+        self.recordings = None  # recordings.Player: uploaded recordings, mixed per speaker
         self.running = False
         self.thread = None
         self.dirty = True
@@ -1865,12 +1866,15 @@ class Router:
             g = self.duck + (duck_to - self.duck) * np.minimum((np.arange(BLOCK) + 1) / (0.03 * SR), 1.0)
             self.duck = float(g[-1])
             tone = self._tone()
+            rec = self.recordings.pull(BLOCK) if self.recordings else {}  # {speaker: (recordings, train gain)}
             test_key = getattr(self, "test_key", None)
             test_mask = _mask(self.test[1]) if self.test else (1.0, 1.0)
             for key, p in self.plan.items():
                 frames = np.zeros((BLOCK, 2))
                 for sp, mask, gain in p["outs"]:
                     sig = y * gain * (g if sp == "inside" else 1.0)
+                    if sp in rec:  # recordings at the speaker's level, ducking the train while they play
+                        sig = sig * rec[sp][1] + rec[sp][0] * gain
                     if sp == "inside" and ic is not None:
                         sig = sig + ic
                     frames[:, 0] += sig * mask[0]
@@ -2344,6 +2348,9 @@ audio = AudioOut()
 intercom = Intercom(lambda: cfg.data["intercom"])
 intercom.keep_marks = bool(hw.FAKE_DIR)  # latency marks for the tests
 router = Router(audio, intercom, cfg)
+recs = recordings.Store(cfg)  # uploaded recordings (settings page), mixed per speaker by the router
+router.recordings = rec_player = recordings.Player(recs)
+recordings_ui.setup(recs, rec_player)
 finder = BoardFinder(cfg)
 seq_lock = threading.RLock()
 
@@ -2585,9 +2592,12 @@ def https_url(client):
 
 # ---------- pages ----------
 HEAD = """<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<link rel="stylesheet" href="/static/cab.css">"""
-ICON_GEAR = ('<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3'
-             'M21.5 12h-3M5.5 12h-3M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1M18.7 18.7l-2.1-2.1M7.4 7.4L5.3 5.3"/></svg>')
+<link rel="stylesheet" href="/static/cab.css">""" + theme.HEAD
+ICON_GEAR = ('<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.4"/><path d="M10.23 4.61L10.64 '
+             '1.89L13.36 1.89L13.77 4.61L15.97 5.52L18.19 3.89L20.11 5.81L18.48 8.03L19.39 10.23L22.11 10.64L22.11 '
+             '13.36L19.39 13.77L18.48 15.97L20.11 18.19L18.19 20.11L15.97 18.48L13.77 19.39L13.36 22.11L10.64 '
+             '22.11L10.23 19.39L8.03 18.48L5.81 20.11L3.89 18.19L5.52 15.97L4.61 13.77L1.89 13.36L1.89 10.64L4.61 '
+             '10.23L5.52 8.03L3.89 5.81L5.81 3.89L8.03 5.52Z"/></svg>')
 ICON_BACK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>'
 ICON_MIC = ('<svg class="mic" viewBox="0 0 40 40" aria-hidden="true"><rect x="14" y="4" width="12" height="20" rx="6"/>'
             '<path d="M8 19a12 12 0 0 0 24 0M20 31v6M14 37h12"/></svg>')
@@ -2760,6 +2770,7 @@ async def engineer(client):
     who = client.id
     ui.add_head_html('<script src="/static/cab.js"></script>')
     ui.html(engineer_html(), sanitize=False).classes("w-full")
+    recordings_ui.engineer(recs, rec_player)  # pinned recordings
     ui.on("ct", lambda e: act(who, (e.args or {}).get("a"), (e.args or {}).get("v")))
     client.on_disconnect(lambda: audio.release(who))
     sent = {}
@@ -2914,6 +2925,7 @@ async def settings(client):
                     with el("div", "mark"):
                         el("b", "", "Settings")
                 with el("div", "hd-right"):
+                    theme.button(el)
                     sbtn("⤓", download, "Download all settings (caltreat-config.json) as a backup")
                     sbtn("⤒", lambda: upload.run_method("pickFiles"), "Restore settings from a downloaded file "
                                                                         "(shows what changes first)")
@@ -3134,6 +3146,8 @@ async def settings(client):
                     live.append(show_board)
                 lcfw_ui.section(finder, live)  # firmware versions and updates
 
+            recordings_ui.section(recs, rec_player, live, el=el, sbtn=sbtn, slider=slider)
+
             errs = ui.html("", sanitize=False, tag="div").classes("errs full")
             live.append(lambda: errs.set_content(_esc(errors())))
 
@@ -3194,7 +3208,7 @@ async def settings(client):
 
 
 def main():
-    ui.run(host="0.0.0.0", port=PORT, title="Caltreat", reload=False, show=False, dark=True, favicon="🚆")
+    ui.run(host="0.0.0.0", port=PORT, title="Caltreat", reload=False, show=False, dark=True, favicon=theme.ICON)
 
 
 if __name__ in {"__main__", "__mp_main__"}:
