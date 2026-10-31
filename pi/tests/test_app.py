@@ -131,7 +131,8 @@ def test_intercom_plays_inside_and_ducks_the_train(running):
     # the train sound on INSIDE is ducked by 18 dB while talking: what the card played over the INSIDE bus the engine
     # made, block by block (the same samples, so the horn's own level changes don't matter; FRONT is no reference
     # with the v12 engine, its mix differs from INSIDE's and their ratio wanders by ~1.5 dB)
-    blocks = {t: bi for t, bi in m.router.devices["usb:1.3"].written if t is not None}
+    written = list(m.router.devices["usb:1.3"].written)  # one copy: the router thread keeps appending
+    blocks = {t: bi for t, bi in written if t is not None}
 
     def gain(s0, s1):  # engine sample clock window, relative to the claim
         ts = [t for t in bus_inside if t_claim + s0 * sr <= t and t + m.BLOCK <= t_claim + s1 * sr and t in blocks]
@@ -143,7 +144,7 @@ def test_intercom_plays_inside_and_ducks_the_train(running):
     duck = 20 * np.log10(gain(0.1, 0.55) / gain(-0.6, -0.05))  # silence from the phone until 0.6 s
     assert duck == pytest.approx(-18, abs=0.3)
     # latency: each frame's capture time to when it played on the (fake) card
-    lat = [i0 + file_pos(m.router.devices["usb:1.3"].written, m.intercom.t0 + idx) / sr - t / 1000
+    lat = [i0 + file_pos(written, m.intercom.t0 + idx) / sr - t / 1000
            for idx, t, *_ in m.intercom.marks]
     assert lat and 0 < np.median(lat) < 0.15, np.median(lat)
 
