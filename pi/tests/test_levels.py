@@ -139,3 +139,13 @@ def test_router_gain_is_level_times_card_trim(monkeypatch):
     assert gains["a_ext"] == pytest.approx(2 * 10 ** (hw.JACK_TRIM_DB / 20))  # default jack trim
     assert gains["a_int"] == pytest.approx(10 ** (-6 / 20))
     assert gains["b_ext"] == pytest.approx(0.5 * 10 ** (-6 / 20))
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_volumes_migrate_from_any_older_version(version):
+    old = {"version": version, "volumes": {"jack": 100, "usb:1.3": 80}}
+    assert config.validate(old) == []
+    new = config.complete(old)
+    assert new["version"] == config.VERSION == 4 and "volumes" not in new and "relay" not in new
+    assert new["card_db"] == {"jack": 4.0, "usb:1.3": hw.pct_to_db(80, hw.USB_DB)}
+    assert config.validate(new) == []

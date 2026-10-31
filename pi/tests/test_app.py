@@ -1,5 +1,5 @@
 """The app's engine without a Pi: speaker routing to (fake) sound cards, intercom ducking, and light mappings reaching
-the right relay channel and lighting controller pin (fake Modbus board, fake_board.py)."""
+the right lighting controller pin (fake Modbus board, fake_board.py)."""
 
 import json
 import os
@@ -232,35 +232,32 @@ def test_doors_function_follows_the_doors(running, board):
     assert seen == {True, False}
 
 
-def test_flash_alternates_phases_and_relays(board):
+def test_flash_alternates_phases(board):
     m.cfg.data["functions"].append({"id": "flashy", "name": "Flashy", "kind": "manual", "symbol": "●"})
     outs = m.cfg.data["boards"][UID]["outputs"]
     outs[0], outs[1] = {"fn": "flashy", "alt": False}, {"fn": "flashy", "alt": True}
-    relay = m.cfg.data["relay"]
-    saved_relay = [dict(o) for o in relay]
-    relay[2], relay[3] = {"fn": "flashy", "alt": False}, {"fn": "flashy", "alt": True}
     m.cfg.save()
     m.io.set_mode("flashy", "flash")
     states = set()
     end = time.monotonic() + 1.5
     while time.monotonic() < end:
-        states.add((board.coils[0], board.coils[1], tuple(m.io.relay_state[2:4])))
+        states.add((board.coils[0], board.coils[1]))
         time.sleep(0.05)
-    assert {(True, False), (False, True)} <= {s[:2] for s in states}  # A and B alternate
-    assert {(True, False), (False, True)} <= {s[2] for s in states}  # relays R3/R4 as phases A/B
+    assert {(True, False), (False, True)} <= states  # A and B alternate
     m.io.set_mode("flashy", "off")
-    relay[:] = saved_relay
+    outs[0], outs[1] = {"fn": None, "alt": False}, {"fn": None, "alt": False}
     m.cfg.save()
-    # relay 1 = car A's headlight, on while A leads: unmapping it hands it to the by-hand switch
-    assert wait_for(lambda: m.io.relay_state[0])
-    m.cfg.data["relay"][0] = {"fn": None, "alt": False}
+    # GP2 = car A's headlight, on while A leads: unmapping it hands it to the by-hand switch
+    outs[2] = {"fn": "a_head", "alt": False}
     m.cfg.save()
-    assert wait_for(lambda: not m.io.relay_state[0])
-    m.io.toggle_output(("relay", 0))
-    assert wait_for(lambda: m.io.relay_state[0])
-    m.io.toggle_output(("relay", 0))
-    m.cfg.data["relay"][0] = {"fn": "a_head", "alt": False}
+    assert wait_for(lambda: board.coils[2])
+    outs[2] = {"fn": None, "alt": False}
     m.cfg.save()
+    assert wait_for(lambda: not board.coils[2])
+    m.io.toggle_output((UID, 2))
+    assert wait_for(lambda: board.coils[2])
+    m.io.toggle_output((UID, 2))
+    assert wait_for(lambda: not board.coils[2])
 
 
 def test_force_test_and_unmapped_toggle(board):

@@ -9,6 +9,7 @@ first start. Runtime state (lights on/off, throttle, ...) is not kept here, only
     errors = validate(obj)         # [] if obj is a good config
 """
 
+import contextlib
 import copy
 import json
 import os
@@ -20,7 +21,8 @@ from pathlib import Path
 
 from . import cars, hw
 
-VERSION = 2  # 2: cars A / B (direction, four speakers, per-car lights)
+VERSION = 4  # 2: cars A / B (direction, four speakers, per-car lights); 3: no relay shield, stack lights, E-STOP;
+# 4: card volumes in dB (card_db, trim_db)
 DIR = Path(os.environ.get("CALTREAT_CONFIG_DIR") or Path.home() / ".config" / "caltreat")
 FILE = "config.json"
 OLD_BOARDS_FILE = "boards.json"
@@ -41,13 +43,14 @@ TIMINGS = ("costume", "real")
 BOARD_PINS = 8
 LEVEL_MAX = 400  # speaker level, %: up to +12 dB (the Router's soft limiter keeps it from clipping)
 TRIM_MAX = 20  # card trim, +-dB
-RELAY_CHANNELS = 4
+OLD_RELAY_CHANNELS = 4  # the relay shield of versions 1-2 (gone: its functions moved to the boards)
 
-# Light functions: what the engineer page and the sequences drive. Outputs (relay channels, board GP pins) are mapped
+# Light functions: what the engineer page and the sequences drive. Outputs (the boards' GP pins) are mapped
 # to a function; two outputs of one function with different phases (alt) alternate when it flashes.
 # kind: manual = off / on / flash from the engineer page; doors = on while the doors are open, flashing while they
 # move; crossing = flashing while a crossing signal sounds; horn = on while the horn sounds; bell = on while the
-# bell rings. (id, default name, kind, symbol)
+# bell rings; stack = the walkers' stack light colour (safety.py: green walk, yellow slowing, red stopped, red flashing
+# E-STOP). Blue is not assigned yet: a manual light. (id, default name, kind, symbol)
 # The per-car lamps (headlight, ditch L / R, markers; cars.py) follow the direction by themselves.
 BUILTIN_FUNCTIONS = [
     ("interior", "Interior", "manual", "▢"),
@@ -55,8 +58,13 @@ BUILTIN_FUNCTIONS = [
     ("crossing", "Crossing flash", "crossing", "✕"),
     ("horn", "Horn lamp", "horn", "▲"),
     ("bell", "Bell lamp", "bell", "♫"),
+    ("stack_green", "Stack green", "stack", "●"),
+    ("stack_yellow", "Stack yellow", "stack", "●"),
+    ("stack_red", "Stack red", "stack", "●"),
+    ("stack_blue", "Stack blue", "manual", "●"),
 ]
-KINDS = ("manual", "doors", "crossing", "horn", "bell", *cars.CAR_KINDS)
+STACK_COLOR = {"stack_green": "green", "stack_yellow": "yellow", "stack_red": "red"}
+KINDS = ("manual", "doors", "crossing", "horn", "bell", "stack", *cars.CAR_KINDS)
 CAR_FUNCTION_IDS = {f[0] for f in cars.CAR_FUNCTIONS}
 ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 DEVICE_RE = re.compile(r"^(jack|none|usb#[1-9]|usb:[0-9]+(\.[0-9]+)*)$")
@@ -81,12 +89,19 @@ def defaults():
         "card_db": {},  # ALSA card volume, dB, by device ("jack", "usb:1.2"); unset = hw.DEFAULT_DB
         "trim_db": {},  # app gain per card, dB (level matching); unset = hw.default_trim(device)
         "intercom": {"mic_gain_db": 0, "level": 80, "duck_db": -18, "timeout_s": 60},
-        "functions": [{"id": i, "name": n, "kind": k, "symbol": s} for i, n, k, s in BUILTIN_FUNCTIONS]
-        + cars.car_function_defs(),
+        "functions": [_builtin(*f) for f in BUILTIN_FUNCTIONS] + cars.car_function_defs(),
         "horn_flash": True,  # headlights flash (alternate) with the horn, as ditch lights at crossings
-        "relay": [dict(o) for o in cars.DEFAULT_RELAY],
+        "estop": {"level": 60, "quiet": 30, "loud_s": 5, "inside": 70},  # alarm % (loud, then quiet bursts while
+        # latched), s loud; inside: % of that on the interior speakers (people are close to them)
         "boards": {},  # chip ID -> {"name": "A", "outputs": [{"fn": id or None, "alt": bool} x 8]}
     }
+
+
+def _builtin(i, n, k, s):
+    f = {"id": i, "name": n, "kind": k, "symbol": s}
+    if i in STACK_COLOR:
+        f["color"] = STACK_COLOR[i]
+    return f
 
 
 def board_defaults(name):
@@ -195,16 +210,26 @@ def validate(c):
             errs.append(f"functions[{i}].kind: one of {', '.join(KINDS)}")
         if not isinstance(f.get("symbol", ""), str) or len(f.get("symbol", "")) > 4:
             errs.append(f"functions[{i}].symbol: up to 4 characters")
+        if f.get("kind") == "stack" and f.get("color") not in ("green", "yellow", "red"):
+            errs.append(f"functions[{i}]: stack light colour green, yellow or red")
         if f.get("kind") in cars.CAR_KINDS and (f.get("car") not in ("a", "b") or
                                                  f.get("side", "l") not in ("l", "r")):
             errs.append(f"functions[{i}]: car a or b (ditch lights: side l or r)")
     fn_ids |= builtin | CAR_FUNCTION_IDS
-    relay = c.get("relay", [{}] * RELAY_CHANNELS)
-    if not isinstance(relay, list) or len(relay) != RELAY_CHANNELS:
-        errs.append(f"relay: a list of {RELAY_CHANNELS} outputs")
-    else:
-        for i, o in enumerate(relay):
-            errs += _output_errors(o, f"relay[{i}]", fn_ids)
+    if isinstance(v, int) and v < 3 and "relay" in c:  # versions 1-2: the relay shield (migrate_v2 moves it)
+        relay = c["relay"]
+        if not isinstance(relay, list) or len(relay) != OLD_RELAY_CHANNELS:
+            errs.append(f"relay: a list of {OLD_RELAY_CHANNELS} outputs")
+        else:
+            for i, o in enumerate(relay):
+                errs += _output_errors(o, f"relay[{i}]", fn_ids)
+    elif "relay" in c:
+        errs.append("relay: there is no relay shield any more (version 3); map the lights to the boards")
+    es = c.get("estop", {})
+    if not isinstance(es, dict) or not _num(es.get("level", 60), 0, 100) or not _num(es.get("quiet", 30), 0, 100) or \
+            not _num(es.get("inside", 70), 0, 100) or not _num(es.get("loud_s", 5), 1, 60) or \
+            es.get("loud_s", 5) != int(es.get("loud_s", 5)):
+        errs.append("estop: level, quiet, inside 0-100; loud_s 1-60 (whole seconds)")
     boards = c.get("boards", {})
     if not isinstance(boards, dict):
         errs.append("boards: not an object")
@@ -228,17 +253,22 @@ def validate(c):
     return errs
 
 
-def complete(c):
-    """c with every missing key filled in from the defaults (c is not changed). Built-in functions always exist."""
+def complete(c, notes=None):
+    """c with every missing key filled in from the defaults (c is not changed). Built-in functions always exist.
+    notes: a list that gets what a migration could not keep as it was (readable lines)."""
     d = defaults()
     out = copy.deepcopy(c)
+    notes = [] if notes is None else notes
     if out.get("version", 1) < 2:
         migrate_v1(out)
-    migrate_volumes(out)
+    if out.get("version", 1) < 3:
+        notes += migrate_v2(out)
+    if out.get("version", 1) < 4:
+        migrate_v3(out)
     for k, v in d.items():
         if k not in out:
             out[k] = copy.deepcopy(v)
-        elif isinstance(v, dict) and k in ("mix", "mix12", "intercom", "env", "ditch"):
+        elif isinstance(v, dict) and k in ("mix", "mix12", "intercom", "env", "ditch", "estop"):
             out[k] = {**v, **out[k]}
     out["speakers"] = {k: {**v, **out["speakers"].get(k, {})} for k, v in d["speakers"].items()}
     for k, v in d["layers"].items():
@@ -248,9 +278,9 @@ def complete(c):
     for f in out["functions"]:
         f.setdefault("kind", "manual")
         f.setdefault("symbol", "")
-    for o in out["relay"]:
-        o.setdefault("fn", None)
-        o.setdefault("alt", False)
+        if f["id"] in STACK_COLOR:  # built in: always the stack colour it is named after
+            f["kind"], f["color"] = "stack", STACK_COLOR[f["id"]]
+    out.pop("relay", None)
     for b in out["boards"].values():
         b.setdefault("outputs", board_defaults(b.get("name", "?"))["outputs"])
         for o in b["outputs"]:
@@ -278,13 +308,57 @@ def migrate_v1(c):
     c["version"] = 2
 
 
-def migrate_volumes(c):
-    """Card volumes as amixer -M % ("volumes") -> the dB they were at ("card_db"), so each card stays where it was."""
+def migrate_v2(c):
+    """Version 2 -> 3 in place: the relay shield is gone. Its outputs' functions move to free board pins (car lamps to
+    their car's board A / B, others to any board) unless a board pin already drives them (the defaults: the boards'
+    GP2 / GP3 are the headlights / markers too). Boards A and B get the stack lights on GP4-GP7 (green, yellow, red,
+    blue) where those pins are free. Returns readable notes about what could not be placed."""
+    notes = []
+    relay = c.pop("relay", None)
+    boards = c.get("boards") if isinstance(c.get("boards"), dict) else {}
+    outs_of = {uid: b["outputs"] for uid, b in boards.items()
+               if isinstance(b, dict) and isinstance(b.get("outputs"), list) and len(b["outputs"]) == BOARD_PINS}
+    for uid, outs in outs_of.items():
+        if str(boards[uid].get("name", "")).lower() in ("a", "b"):
+            for pin, fid in cars.STACK_PINS.items():
+                o = outs[pin]
+                if isinstance(o, dict) and o.get("fn") is None and \
+                        not any(isinstance(x, dict) and x.get("fn") == fid for x in outs):
+                    outs[pin] = {"fn": fid, "alt": False}
+                elif not any(isinstance(x, dict) and x.get("fn") == fid for x in outs):
+                    notes.append(f"board {boards[uid].get('name')}: GP{pin} is in use, {fid} not mapped")
+    used = {o.get("fn") for outs in outs_of.values() for o in outs if isinstance(o, dict)}
+    for i, o in enumerate(relay if isinstance(relay, list) else []):
+        fid = o.get("fn") if isinstance(o, dict) else None
+        if fid is None or fid in used:
+            continue
+        car = fid[0] if fid in CAR_FUNCTION_IDS else None
+        order = sorted(outs_of, key=lambda u: (car is not None and str(boards[u].get("name", "")).lower() != car,
+                                               str(boards[u].get("name", ""))))
+        if car is not None:
+            order = [u for u in order if str(boards[u].get("name", "")).lower() == car] or order
+        place = next(((u, p) for u in order for p in range(BOARD_PINS)
+                      if isinstance(outs_of[u][p], dict) and outs_of[u][p].get("fn") is None), None)
+        if place is None:
+            notes.append(f"relay R{i + 1} ({fid}): no free board pin, not mapped")
+            continue
+        u, p = place
+        outs_of[u][p] = {"fn": fid, "alt": bool(o.get("alt", False))}
+        used.add(fid)
+        notes.append(f"relay R{i + 1} ({fid}) -> board {boards[u].get('name')} GP{p}")
+    c["version"] = 3
+    return notes
+
+
+def migrate_v3(c):
+    """Version 3 -> 4 in place: card volumes as amixer -M % ("volumes") -> the dB they were at ("card_db"), so each
+    card stays where it was."""
     vol = c.pop("volumes", None)
     if isinstance(vol, dict):
         db = c.setdefault("card_db", {})
         for dev, pct in vol.items():
             db.setdefault(dev, hw.pct_to_db(pct, hw.JACK_DB if dev == hw.JACK else hw.USB_DB))
+    c["version"] = 4
 
 
 def parse(text):
@@ -330,6 +404,7 @@ class Config:
         self.data = data
         self.lock = threading.RLock()
         self.error = None
+        self.notes = []  # what the last migration moved or could not keep (shown in Settings)
         self.listeners = []
         self._timer = None  # a pending changed() write
         self._wlock = threading.Lock()  # one disk write at a time
@@ -354,7 +429,11 @@ class Config:
             if errs:
                 cfg.error = f"{cfg.path} invalid ({errs[0]}); using defaults"
             else:
-                cfg.data = complete(raw)
+                cfg.data = complete(raw, cfg.notes)
+                if raw.get("version", 1) < VERSION:  # keep the old file, write the migrated one (notes: this start)
+                    with contextlib.suppress(OSError):
+                        shutil.copy2(cfg.path, cfg.path.with_name(f"{FILE}.v{raw.get('version', 1)}"))
+                    cfg.save()
         elif cfg.error is None:
             cfg._migrate()
         if cfg.error:

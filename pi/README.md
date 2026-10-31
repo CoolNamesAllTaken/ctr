@@ -5,8 +5,8 @@ Pi on the train and serves two pages:
 
 - **http://caltreat.local/**: the **engineer page**. Big buttons only:
   the cab display, Depart / Arrive / Crossing, HORN (hold), BELL, DOORS,
-  TALK (hold, the intercom), power with AIR and STOP, the horn signals and the
-  lights. Hover (or long-press) any control for what it does.
+  TALK (hold, the intercom), power with AIR and STOP, the horn signals, the
+  lights and the **E-STOP** (see [Emergency stop](#emergency-stop-e-stop)). Hover (or long-press) any control for what it does.
 - **http://caltreat.local/settings** (the ⚙ on the engineer page): the
   sound mix, which sound card and channel each speaker is on, the intercom
   levels, what every light output does, and a backup of all of it.
@@ -33,13 +33,15 @@ What it does:
   a sequence takes that control back; ✕ stops the sequence.
 - **Intercom**: hold TALK and speak into the phone; it plays on the INSIDE
   speakers, and the train sounds there get quieter while you talk.
-- **Lights**: the relay shield (white head/ditch lights and red markers by
-  default) and GP0–GP7 on the lighting controller boards
+- **Lights**: GP0–GP7 on the lighting controller boards
   ([`firmware/caltreat_lighting_controller`](../firmware/caltreat_lighting_controller)),
-  found on the Pi's wired network over Modbus TCP. Each output is mapped to a
-  *light function* in the settings (headlights, markers, interior, door
+  found on the Pi's wired network over Modbus TCP (the Pi has no relay shield). Each output is mapped to a
+  *light function* in the settings (headlights, ditch lights, markers, the walkers' stack light, interior, door
   lights, crossing flash, horn, bell, or your own), so you can rewire without
   changing code.
+- **Stack lights and E-STOP**: a four-colour stack light on each board tells the
+  people walking inside when to walk; the engineer's E-STOP stops the train at
+  once (see [Stack lights](#stack-lights-walk--slowing--stopped) and [Emergency stop](#emergency-stop-e-stop)).
 
 The code is in [`src/caltreat/`](src/caltreat/), built with
 [NiceGUI](https://nicegui.io/) and numpy:
@@ -49,6 +51,7 @@ The code is in [`src/caltreat/`](src/caltreat/), built with
 | `__main__.py` | speakers, lights, boards and both pages; the old numpy sound engine (a port of [`publish.html`](publish.html)), used only when Node.js is missing. The first ~1000 lines are an older version kept as comments. |
 | `sidecar.py` | starts the v12 engine (`../../engine/sidecar.js`) and reads each speaker's sound from it. |
 | `sequencer.py` | Depart / Arrive / Crossing / Auto run and the horn signals (a port of the v12 browser app's `sequencer.js`). |
+| `safety.py` | the stack lights' state (walk / slowing / stopped) and the E-STOP alarm tone. |
 | `intercom.py` | push-to-talk: one talker at a time, jitter buffer, resampling. |
 | `config.py` | the settings file. |
 | `hw.py`, `fakesink.py` | sound cards (`aplay`, `amixer`), and the stand-in used without them. |
@@ -268,7 +271,7 @@ speakers sound like (on the train, approaching, platform, distance).
 
 ### Lights
 
-Every output, the relay shield's R1–R4 and each board's GP0–GP7, is mapped to
+Every output, each board's GP0–GP7, is mapped to
 a light function, or to "by hand". The phase (A/B) makes two outputs of one
 function alternate when it flashes (ditch lights, crossing flashers).
 Functions:
@@ -279,12 +282,14 @@ Functions:
 | Door lights | the doors: on while open, flashing while they move. |
 | Crossing flash | flashing during a Crossing sequence or crossing signal. |
 | Horn lamp, Bell lamp | on while the horn sounds / the bell rings. |
+| Stack green / yellow / red | the walkers' stack light (see [Stack lights](#stack-lights-walk--slowing--stopped)). |
+| Stack blue | not assigned yet: off / on / flash from the engineer page's lights row. |
 
 Each output row shows its live state; the ◐ button switches a "by hand"
 output, or forces a mapped one on as a test (tap again to release). Boards are
 known by their chip ID (the MAC is shown too) and named A, B, … in the order
-they are first seen; you can rename them. Default mapping: R1/R2 headlights
-A/B, R3/R4 markers A/B, board pins by hand.
+they are first seen; you can rename them. Default mapping: see below (car
+lamps on GP0–GP3, stack light on GP4–GP7).
 
 ## Cars A and B: direction, speakers, lights
 
@@ -307,7 +312,7 @@ Reversing fades the two outside speakers over to their new mix (60 ms).
 Recordings' F / I / R mean front / inside / rear, so they follow the direction.
 
 **Lights.** Each car has a headlight, ditch lights L and R and markers, as
-light functions (A headlight, A ditch L, ...) that relays and board pins map
+light functions (A headlight, A ditch L, ...) that board pins map
 to. They follow 49 CFR 229.125. At the leading car the headlight and ditch
 lights burn steady. The ditch lights flash alternately (L / R) when the horn
 sounds at grade crossings (229.125(d)): here they flash while the horn sounds
@@ -318,16 +323,90 @@ flash rate (40-180 per minute per lamp, default 60) and how long the flashing
 lasts after the horn. The engineer page's ☀ Lights button switches all of
 them off and on.
 
-Default mapping: relay R1 = A headlight, R2 = B headlight (the white
-channels), R3 = A markers, R4 = B markers (red). A lighting controller named
-A or B (they get letters in the order they are found) drives its car's ditch
-L, ditch R, headlight and markers on GP0-GP3 (the MOSFET module's lights 1-4).
-Change any of these in Settings.
+Default mapping of a lighting controller named A or B (they get letters in
+the order they are found):
+
+| Pin | Light |
+| --- | --- |
+| GP0 | ditch L (its car) |
+| GP1 | ditch R |
+| GP2 | headlight |
+| GP3 | markers |
+| GP4 | stack green |
+| GP5 | stack yellow |
+| GP6 | stack red |
+| GP7 | stack blue |
+
+GP0–GP3 are the MOSFET module's lights 1–4, as before; the stack light takes
+the four pins that were free. Change any of these in Settings.
 
 A config from before (version 1) is updated on first start. If its speakers
-and relays were still at their old defaults, it gets the new ones; otherwise
-front -> A ext, inside -> A int, rear -> B ext (B int off), and the relays keep
-their old mapping. Check Settings → Speakers and the relay and board mappings.
+were still at their old defaults, it gets the new ones; otherwise
+front -> A ext, inside -> A int, rear -> B ext (B int off). Check Settings →
+Speakers.
+
+**No relay shield (config version 3).** Older configs mapped lights to a
+relay shield that isn't on the train. On the first start of this version the
+relays are dropped: a light that a board pin already drives (the default
+headlights and markers) just loses its relay, any other relay light moves to
+a free board pin (car lamps to their car's board), and boards A and B get
+the stack light on GP4–GP7 where those pins are free. What moved, or couldn't
+(no free pin), is listed under Settings → Light functions. The old file is kept as
+`config.json.v2`.
+
+## Stack lights: walk / slowing / stopped
+
+People walk inside the costume; the four-colour stack light on each lighting
+controller (both show the same) tells them when to walk:
+
+| Light | Means | When |
+| --- | --- | --- |
+| green, steady | walk forward | power on and the train speeding up or holding its speed |
+| yellow, steady | slowing down | moving with the power off or reduced, STOP, Arrive braking |
+| red, steady | stopped | standing (below 0.3 mph), at power-on, while the doors aren't closed, while the sound engine starts |
+| red, flashing (2 Hz) | E-STOP | until the engineer resets it |
+| blue | not assigned yet | off / on / flash by hand (engineer page, Lights) |
+
+It comes from the engine's own speed, power and braking (`safety.py`). A
+change towards red shows at once; a change towards green only after the new
+state has held for 0.5 s, so it never flickers. The cab display shows the
+same stack (the small column at the right).
+
+If the Pi stops talking to a board (app crash, cable, power), the board itself
+turns the stack red on and the other colours off after its heartbeat
+(about 3 s): the app writes these failsafe levels to each board when it
+connects (in the board's RAM, not its flash). Nothing can get greener without
+the app.
+
+## Emergency stop (E-STOP)
+
+The big red **E-STOP** under the header on the engineer page (or hold
+<kbd>E</kbd>): **hold it 0.3 s** (the bar fills). Letting go earlier does
+nothing, so a brush of a sleeve or a pocket doesn't stop the show, but a real
+press still takes only a fraction of a second.
+
+At once:
+
+- the train stops: power off and speed 0 (the engine's STOP brakes over
+  seconds, so the app sends its own instant stop), the brake-air dump and, if
+  it was moving, the squeal;
+- any sequence or Auto run is cancelled, horn signals and the bell stop,
+  playing recordings stop;
+- an alarm (two-tone, 1 kHz / 800 Hz, 0.5 s cycle) sounds on **all four
+  speakers**, whatever the direction, over the intercom's and recordings'
+  ducking: loud for 5 s, then a quieter burst every 3 s (the interior speakers
+  at 70 % of that by default: people stand close to them);
+- the stack lights flash red (ditch lights, headlights and markers stay as the
+  rule has them).
+
+It stays **latched**: every browser shows a red E-STOP banner, and power,
+Depart / Arrive / Crossing / Auto run and closing the doors are locked (the
+doors can still open). To reset: ↺ in the banner, or hold E-STOP 2 s. The
+train then stands with the power off (red) until the engineer applies power.
+
+Settings → E-STOP sets the alarm's loud level (default 60 %, peaks at about
+-4.5 dBFS), how long it stays loud, the quieter level and the inside share,
+with ▶ to test it (2 s, nothing else happens).
 
 ## Recordings
 
@@ -356,15 +435,14 @@ Caltreat icon.
 | What | How the app reaches it |
 | --- | --- |
 | Speakers | 3.5 mm jack (ALSA card `Headphones`) and C-Media USB sound cards, one `aplay` per card in use. Volumes are set with `amixer`. |
-| Relay shield (Inland / Keyestudio KS0212-style) | BCM GPIO 4, 22, 6, 26 for channels 1–4, through `pinctrl`. |
 | Lighting controller boards | Modbus TCP on `eth0`. The Pi is `192.168.50.1` and hands out `.10`–`.254`. |
 
-The `caltreat` user has to be in the `audio` and `gpio` groups.
+The `caltreat` user has to be in the `audio` group.
 
 ## Trying it without the Pi
 
 On a computer without `aplay` the app runs with fake sound cards (two fake
-USB cards, the sound goes nowhere), and without the relays:
+USB cards, the sound goes nowhere):
 
 ```sh
 cd pi

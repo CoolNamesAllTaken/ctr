@@ -198,6 +198,7 @@ class V12Engine:
         self.timing = "costume"
         self.t = 0  # output sample clock (blocks handed to the Router)
         self.silent = np.zeros((BLOCK, 3), dtype=np.float32)
+        self._zero_until = 0.0
 
     def send(self, m, key=None):
         self.sc.send(m, key)
@@ -239,6 +240,26 @@ class V12Engine:
         """STOP (v12): brake to a halt (squeal, thump, air, the sander as set); standing: the last seconds of one."""
         self.send({"t": "stop"})
         self.set_throttle(0.0)
+
+    def estop(self):
+        """EMERGENCY STOP: power off and speed 0 at once (sidecar.js "estop": the engine itself has no instant stop),
+        horn and patterns off, the brake-air dump (and the squeal if it was moving)."""
+        with self.lock:
+            self.holders.clear()
+        self.pattern_until = 0.0
+        self.motor.speed = 0.0
+        self.set_throttle(0.0)
+        self._zero_until = time.monotonic() + 0.3
+        self.send({"t": "estop"})
+
+    @property
+    def stopping(self):
+        """The engine is braking (STOP / Arrive)."""
+        return bool(self._st().get("stopping"))
+
+    @property
+    def ready(self):
+        return self.sc.ready
 
     def set_throttle(self, v):
         self.motor.throttle = min(max(float(v), 0.0), 1.0)
@@ -321,7 +342,10 @@ class V12Engine:
     def render_buses(self):
         """{bus: (BLOCK,) float} for the Router (silence while the engine starts or is late)."""
         b = self.sc.read_block()
-        self.motor.speed = float(self._st().get("speed", 0.0))
+        if not self.sc.ready:
+            self.motor.speed = 0.0  # starting or restarting: the engine starts from rest
+        elif time.monotonic() >= self._zero_until:  # an E-STOP: states already on their way still say "moving"
+            self.motor.speed = float(self._st().get("speed", 0.0))
         self.t += BLOCK
         b = self.silent if b is None else b
         return {"front": b[:, 0], "inside": b[:, 1], "rear": b[:, 2]}
