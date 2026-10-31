@@ -9,9 +9,11 @@ database.
 > [!WARNING]
 > The employee portal (`/employee`) and the API endpoints it uses have no login
 > yet (see the TODO in `backend/core/api.py`). Once deployed, anyone who finds
-> the site can add riders, change card balances, record taps and post alerts.
-> Until employee login exists, leave the domains unconnected (step 10) so the
-> site is only reachable at its unlisted `run.app` addresses.
+> the Caltreat site can add riders, change card balances, record taps and post
+> alerts. Until employee login exists, leave the Caltreat domain unconnected
+> (step 10) so that site is only reachable at its unlisted `run.app` addresses.
+> chippercard.com is fine to connect: it serves only the Chipper pages, not the
+> employee portal or the API.
 
 ## What you'll end up with
 
@@ -250,49 +252,83 @@ previous one. The next deploy from `main` replaces that.
 
 ## 10. Connect the domains
 
-Skip this until employee login exists (see the warning at the top).
+chippercard.com can be connected now. Leave the Caltreat domain until
+employee login exists (see the warning at the top), then follow
+[the same steps](#the-caltreat-domain) for it.
 
-Set the Caltreat domain, then verify you own each domain. This opens Google
-Search Console, which asks you to add a TXT record to DNS.
+Domain mappings are in gcloud's beta commands. Install those once:
 
 ```sh
-export CALTREAT_DOMAIN=caltreat.example.com   # wherever the Caltreat site will live
-
-gcloud domains verify chippercard.com
-gcloud domains verify $CALTREAT_DOMAIN
+gcloud components install beta
 ```
 
-Map each hostname to `ctr-web`:
+### chippercard.com
+
+Verify you own the domain. This opens Google Search Console, which asks you
+to add a TXT record to DNS. Sign in to it with the same Google account gcloud
+uses, or the mapping in the next step is refused.
 
 ```sh
-for domain in chippercard.com www.chippercard.com $CALTREAT_DOMAIN; do
-  gcloud run domain-mappings create --service=ctr-web --domain=$domain
+gcloud domains verify chippercard.com
+```
+
+Once Search Console shows the domain as verified, map both hostnames to
+`ctr-web`:
+
+```sh
+for domain in chippercard.com www.chippercard.com; do
+  gcloud beta run domain-mappings create --service=ctr-web --domain=$domain
 done
 ```
 
 Each mapping lists the DNS records it needs under `resourceRecords`:
 
 ```sh
-gcloud run domain-mappings describe --domain=chippercard.com
+gcloud beta run domain-mappings describe --domain=chippercard.com
+gcloud beta run domain-mappings describe --domain=www.chippercard.com
 ```
 
-Add those records at your DNS provider: A and AAAA records for a bare domain
-like chippercard.com, and a CNAME to `ghs.googlehosted.com` for a subdomain
-like www. Google issues HTTPS certificates once DNS resolves. That usually
-takes 15 minutes to an hour and can take up to a day.
+chippercard.com's DNS is at GoDaddy. On the domain's **DNS** page there:
+
+1. Delete the existing `A` records for `@`. They point at GoDaddy's parking
+   or forwarding servers, and if any are left some visitors land there and
+   Google can't issue the certificate. If the domain has **Forwarding** set
+   up, remove that too.
+2. Add every `A` and `AAAA` record the bare domain's mapping lists, with the
+   name `@`.
+3. Change the `www` record to a `CNAME` to `ghs.googlehosted.com`.
+
+Google issues HTTPS certificates once DNS resolves. That usually takes 15
+minutes to an hour and can take up to a day. The mapping's `status` in the
+`describe` output shows how far along it is.
 
 The Chipper hostnames are listed in `frontend/src/proxy.ts`. Every other
-hostname gets the Caltreat site, so the Caltreat domain needs no code change.
-If you add another Chipper hostname, add it to that list.
+hostname gets the Caltreat site. If you add another Chipper hostname, add it
+to that list.
 
-Once the domains work, check:
+Once it works, check:
 
-- `https://$CALTREAT_DOMAIN`: the Caltreat home page, with Schedules, Live Map
-  and Alerts.
-- `https://chippercard.com`: the Chipper Card home page, with How it works and
-  Get a card.
-- `https://chippercard.com/schedule`: a 404, because Caltreat pages aren't
-  served on the Chipper domain.
+- `https://chippercard.com` and `https://www.chippercard.com`: the Chipper
+  Card home page, with How it works and Get a card.
+- `https://chippercard.com/schedule` and `https://chippercard.com/employee`:
+  404s, because Caltreat pages aren't served on the Chipper domain.
+- `https://chippercard.com/api/health/`: a 404, because the API isn't either.
+
+### The Caltreat domain
+
+Only once employee login exists. The Caltreat domain needs no code change.
+
+```sh
+export CALTREAT_DOMAIN=caltreat.example.com   # wherever the Caltreat site will live
+
+gcloud domains verify $CALTREAT_DOMAIN
+gcloud beta run domain-mappings create --service=ctr-web --domain=$CALTREAT_DOMAIN
+gcloud beta run domain-mappings describe --domain=$CALTREAT_DOMAIN
+```
+
+Add the DNS records it lists, as for chippercard.com. Then
+`https://$CALTREAT_DOMAIN` should show the Caltreat home page, with
+Schedules, Live Map and Alerts.
 
 ### When to use a load balancer instead
 
