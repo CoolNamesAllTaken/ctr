@@ -2,11 +2,11 @@
 
 import { startTransition, useActionState, useRef } from "react";
 import type { ActionState } from "../action-state";
-import type { Train } from "../types";
+import type { TrainRun } from "../types";
 import { ActionMessage, inputClass, primaryButtonClass } from "../ui";
 import { issueAlert } from "./actions";
 
-export function AlertForm({ trains }: { trains: Train[] }) {
+export function AlertForm({ runs }: { runs: TrainRun[] }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     async (prev, formData) => {
@@ -33,9 +33,9 @@ export function AlertForm({ trains }: { trains: Train[] }) {
         Train
         <select name="train_id" className={inputClass}>
           <option value="">Whole line</option>
-          {trains.map((train) => (
-            <option key={train.id} value={train.id}>
-              {train.name}
+          {runs.map((run) => (
+            <option key={run.train_id} value={run.train_id}>
+              {run.train_name}
             </option>
           ))}
         </select>

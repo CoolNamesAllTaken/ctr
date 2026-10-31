@@ -67,3 +67,31 @@ def test_list_alerts_newest_first(client, train):
         ("Second", "Train 1"),
         ("First", None),
     ]
+
+
+def patch(client, alert_id, data):
+    return client.patch(
+        f"/api/alerts/{alert_id}/", data, content_type="application/json"
+    )
+
+
+@pytest.mark.django_db
+def test_cancel_alert(client, train):
+    alert = Alert.objects.create(message="Running late", train=train)
+
+    response = patch(client, alert.id, {"is_active": False})
+
+    assert response.status_code == 200
+    assert response.json()["is_active"] is False
+    assert response.json()["train_name"] == "Train 1"
+    alert.refresh_from_db()
+    assert not alert.is_active
+    assert client.get("/api/alerts/?active=true").json() == []
+
+
+@pytest.mark.django_db
+def test_cancel_missing_alert(client):
+    response = patch(client, 999, {"is_active": False})
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "That alert no longer exists."}
