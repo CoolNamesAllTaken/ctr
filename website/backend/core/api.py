@@ -152,6 +152,7 @@ def create_starter_data(request):
 
 class RiderIn(Schema):
     name: str
+    costume: str = ""
     card_uid: str
     balance: Decimal = Field(ge=0, max_digits=8, decimal_places=2)
 
@@ -159,6 +160,7 @@ class RiderIn(Schema):
 class RiderOut(Schema):
     id: int
     name: str
+    costume: str
     card_uid: str | None = Field(None, alias="card.uid")
     balance: Decimal | None = Field(None, alias="card.balance")
 
@@ -188,7 +190,9 @@ def create_rider(request, payload: RiderIn):
 
     with transaction.atomic():
         card = ChipperCard.objects.create(uid=uid, balance=payload.balance)
-        rider = Rider.objects.create(name=name, card=card)
+        rider = Rider.objects.create(
+            name=name, costume=payload.costume.strip(), card=card
+        )
     return Status(201, rider)
 
 

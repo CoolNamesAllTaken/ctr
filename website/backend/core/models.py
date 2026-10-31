@@ -152,6 +152,8 @@ class ChipperCard(models.Model):
 
 class Rider(models.Model):
     name = models.CharField(max_length=100)
+    # What the trick-or-treater is dressed as, to tell same-named riders apart.
+    costume = models.CharField(max_length=100, blank=True)
     card = models.OneToOneField(
         ChipperCard,
         on_delete=models.PROTECT,
