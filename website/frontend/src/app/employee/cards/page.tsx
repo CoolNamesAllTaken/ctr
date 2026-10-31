@@ -58,7 +58,7 @@ export default function CardsPage() {
         <h2 className="text-xl font-semibold">Set up a Chipper card</h2>
         <p className={mutedClass}>
           Creates a new rider and gives them a new card. Tap the card on the
-          reader to fill in its UID, or generate one for a pretend card.
+          reader to fill in its UID.
         </p>
         <NewRiderForm />
       </section>
