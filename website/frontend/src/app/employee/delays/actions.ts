@@ -2,14 +2,15 @@
 
 import { refresh } from "next/cache";
 import { ApiError, apiFetch } from "@/lib/api";
+import { requireEmployee } from "@/lib/employee";
 import { type ActionState, errorState } from "../action-state";
 import type { TrainRun } from "../types";
 
-// TODO: check the employee's session here once employee login exists.
 export async function setDelay(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  await requireEmployee();
   const minutes = Number(formData.get("delay_minutes"));
   // Blank means from the train's first stop, and no alert.
   const fromStationId = formData.get("from_station_id");

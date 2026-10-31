@@ -15,6 +15,8 @@ const TABS = [
 
 export function EmployeeTabs() {
   const pathname = usePathname();
+  // None of the tabs open until they've logged in.
+  if (pathname === "/employee/login") return null;
 
   return (
     <nav className="flex flex-wrap gap-1 border-b border-zinc-200 dark:border-zinc-800">

@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { EMPLOYEE_COOKIE, isEmployeeToken } from "@/lib/employee";
 
 // Hosts that serve the Chipper Card site from app/chipper. chipper.localhost
 // is for development; browsers resolve it like localhost.
@@ -31,6 +32,17 @@ export function proxy(request: NextRequest) {
   if (pathname === "/chipper" || pathname.startsWith("/chipper/")) {
     url.pathname = "/_not-found";
     return NextResponse.rewrite(url, { status: 404 });
+  }
+
+  // The employee portal needs the passphrase, apart from the page to enter it.
+  if (
+    (pathname === "/employee" || pathname.startsWith("/employee/")) &&
+    pathname !== "/employee/login" &&
+    !isEmployeeToken(request.cookies.get(EMPLOYEE_COOKIE)?.value)
+  ) {
+    url.pathname = "/employee/login";
+    url.search = new URLSearchParams({ next: pathname }).toString();
+    return NextResponse.redirect(url);
   }
 
   // Everything else, including /api on the Caltreat site, carries on to the

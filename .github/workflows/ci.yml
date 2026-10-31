@@ -82,6 +82,8 @@ jobs:
       SQL_INSTANCE: caltreat:us-west1:ctr-db
       DJANGO_ENV: POSTGRES_HOST=/cloudsql/caltreat:us-west1:ctr-db,POSTGRES_DB=ctr,POSTGRES_USER=ctr
       DJANGO_SECRETS: DJANGO_SECRET_KEY=django-secret-key:latest,POSTGRES_PASSWORD=postgres-password:latest
+      # Both services need the employee portal's passphrase.
+      EMPLOYEE_SECRET: EMPLOYEE_PASSPHRASE=employee-passphrase:latest
     steps:
       - uses: actions/checkout@v4
       - id: auth
@@ -140,7 +142,7 @@ jobs:
           --service-account=ctr-api@caltreat.iam.gserviceaccount.com
           --set-cloudsql-instances=$SQL_INSTANCE
           --set-env-vars=$DJANGO_ENV,DJANGO_ALLOWED_HOSTS=${API_URL#https://}
-          --set-secrets=$DJANGO_SECRETS
+          --set-secrets=$DJANGO_SECRETS,$EMPLOYEE_SECRET
           --allow-unauthenticated
       - name: Deploy Next.js
         run: >
@@ -149,4 +151,5 @@ jobs:
           --image=$REPO/web:$GITHUB_SHA
           --service-account=ctr-web@caltreat.iam.gserviceaccount.com
           --set-env-vars=API_URL=$API_URL
+          --set-secrets=$EMPLOYEE_SECRET
           --allow-unauthenticated

@@ -2,6 +2,7 @@
 
 import { refresh } from "next/cache";
 import { ApiError, apiFetch } from "@/lib/api";
+import { requireEmployee } from "@/lib/employee";
 import { type ActionState, errorState } from "../action-state";
 import type { TrainStatus } from "../types";
 
@@ -24,11 +25,11 @@ function describe(status: TrainStatus) {
   }
 }
 
-// TODO: check the employee's session here once employee login exists.
 export async function setTrainStatus(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  await requireEmployee();
   const trainId = Number(formData.get("train_id"));
   // "timetable" clears the status, putting the train back on the timetable.
   const state = formData.get("state");

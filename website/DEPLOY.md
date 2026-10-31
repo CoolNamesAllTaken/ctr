@@ -6,21 +6,17 @@ setup that makes that work, then how deploys run and how to connect the
 domains. Plan on about an hour for the setup, most of it waiting for the
 database.
 
-> [!WARNING]
-> The employee portal (`/employee`) and the API endpoints it uses have no login
-> yet (see the TODO in `backend/core/api.py`). Once deployed, anyone who finds
-> the Caltreat site can add riders, change card balances, record taps and post
-> alerts. Until employee login exists, leave the Caltreat domain unconnected
-> (step 10) so that site is only reachable at its unlisted `run.app` addresses.
-> chippercard.com is fine to connect: it serves only the Chipper pages, not the
-> employee portal or the API.
+> [!NOTE]
+> The employee portal (`/employee`) is behind one shared passphrase, not
+> per-person accounts. Anyone who has it can add riders, change card balances,
+> record taps and post alerts. Change it (step 4) if it gets around.
 
 ## What you'll end up with
 
 ```
- caltreat domain ──┐
-                   ├─▶ Cloud Run: ctr-web ──/api──▶ Cloud Run: ctr-api ──▶ Cloud SQL
- chippercard.com ──┘     (Next.js, both sites)        (Django)              (Postgres 18)
+ ctr.arborhalloween.com ──┐
+                          ├─▶ Cloud Run: ctr-web ──/api──▶ Cloud Run: ctr-api ──▶ Cloud SQL
+ chippercard.com ─────────┘     (Next.js, both sites)        (Django)              (Postgres 18)
 ```
 
 - **ctr-web** runs the production build of `frontend/`. `src/proxy.ts` picks
@@ -116,6 +112,17 @@ python3 -c "import secrets; print(secrets.token_urlsafe(50), end='')" \
   | gcloud secrets create django-secret-key --data-file=-
 ```
 
+Then choose the passphrase employees log in to the portal with:
+
+```sh
+read -rs EMPLOYEE_PASSPHRASE   # type the passphrase, then Enter
+printf %s "$EMPLOYEE_PASSPHRASE" | gcloud secrets create employee-passphrase --data-file=-
+```
+
+To change it later, add a new version with
+`gcloud secrets versions add employee-passphrase --data-file=-` the same way,
+then redeploy (step 8). Changing it logs everyone out.
+
 ## 5. Create the image repository
 
 ```sh
@@ -131,7 +138,7 @@ to keep only the recent ones.
 ## 6. Create the service accounts
 
 Each service runs as its own account. Django's can reach the database and read
-the secrets. The frontend's needs no permissions at all.
+the secrets. The frontend's can only read the employee passphrase.
 
 ```sh
 gcloud iam service-accounts create ctr-api --display-name="ctr Django API"
@@ -141,6 +148,9 @@ for role in roles/cloudsql.client roles/secretmanager.secretAccessor; do
   gcloud projects add-iam-policy-binding $PROJECT_ID \
     --member=serviceAccount:$API_SA --role=$role --condition=None
 done
+
+gcloud secrets add-iam-policy-binding employee-passphrase \
+  --member=serviceAccount:$WEB_SA --role=roles/secretmanager.secretAccessor
 ```
 
 A new service account can take a few seconds to become usable. If a binding
@@ -252,9 +262,8 @@ previous one. The next deploy from `main` replaces that.
 
 ## 10. Connect the domains
 
-chippercard.com can be connected now. Leave the Caltreat domain until
-employee login exists (see the warning at the top), then follow
-[the same steps](#the-caltreat-domain) for it.
+chippercard.com serves the Chipper Card site, and ctr.arborhalloween.com the
+Caltreat site.
 
 Domain mappings are in gcloud's beta commands. Install those once:
 
@@ -314,21 +323,34 @@ Once it works, check:
   404s, because Caltreat pages aren't served on the Chipper domain.
 - `https://chippercard.com/api/health/`: a 404, because the API isn't either.
 
-### The Caltreat domain
+### ctr.arborhalloween.com
 
-Only once employee login exists. The Caltreat domain needs no code change.
+Every hostname not in the Chipper list gets the Caltreat site, so this needs
+no code change.
+
+Verify you own the domain, as for chippercard.com. Verifying
+arborhalloween.com covers all its subdomains. If you can only change the
+`ctr` record, verify `ctr.arborhalloween.com` instead.
 
 ```sh
-export CALTREAT_DOMAIN=caltreat.example.com   # wherever the Caltreat site will live
-
-gcloud domains verify $CALTREAT_DOMAIN
-gcloud beta run domain-mappings create --service=ctr-web --domain=$CALTREAT_DOMAIN
-gcloud beta run domain-mappings describe --domain=$CALTREAT_DOMAIN
+gcloud domains verify arborhalloween.com
 ```
 
-Add the DNS records it lists, as for chippercard.com. Then
-`https://$CALTREAT_DOMAIN` should show the Caltreat home page, with
-Schedules, Live Map and Alerts.
+Then map it and list the record it needs:
+
+```sh
+gcloud beta run domain-mappings create --service=ctr-web --domain=ctr.arborhalloween.com
+gcloud beta run domain-mappings describe --domain=ctr.arborhalloween.com
+```
+
+arborhalloween.com's DNS is at Cloudflare, which already has a `ctr` record.
+On the domain's **DNS** page there, change that record to a `CNAME` to
+`ghs.googlehosted.com` and set its proxy status to **DNS only** (the grey
+cloud). If Cloudflare proxies it, visitors reach Cloudflare instead of Google
+and Google can't issue the certificate.
+
+Once the certificate is issued, `https://ctr.arborhalloween.com` should show
+the Caltreat home page, with Schedules, Live Map and Alerts.
 
 ### When to use a load balancer instead
 

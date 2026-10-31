@@ -26,6 +26,9 @@ services:
     restart: unless-stopped
     ports:
       - ${FRONTEND_PORT:-3000}:3000
+    # For EMPLOYEE_PASSPHRASE
+    env_file:
+      - .env.dev
     environment:
       API_URL: http://django:8000
     volumes:

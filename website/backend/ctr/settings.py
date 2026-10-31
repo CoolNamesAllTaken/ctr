@@ -42,6 +42,11 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 
+# The shared passphrase for the employee portal. Employees log in to the portal
+# with it, and the Next.js server sends it with every API request. The employee
+# endpoints refuse requests without it, and all requests while it's unset.
+EMPLOYEE_PASSPHRASE = os.getenv("EMPLOYEE_PASSPHRASE", "")
+
 
 # Application definition
 

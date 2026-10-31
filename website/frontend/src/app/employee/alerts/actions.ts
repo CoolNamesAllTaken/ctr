@@ -2,14 +2,15 @@
 
 import { refresh } from "next/cache";
 import { ApiError, apiFetch } from "@/lib/api";
+import { requireEmployee } from "@/lib/employee";
 import { type ActionState, errorState } from "../action-state";
 import type { Alert } from "../types";
 
-// TODO: check the employee's session here once employee login exists.
 export async function issueAlert(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  await requireEmployee();
   // A blank train means the alert is about the whole line.
   const trainId = formData.get("train_id");
 

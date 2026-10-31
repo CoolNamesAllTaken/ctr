@@ -22,7 +22,11 @@ export async function apiFetch<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, init);
+  // Django's employee endpoints need the passphrase. This is server code, so
+  // it's never sent to the browser; src/lib/employee.ts gates the employees.
+  const headers = new Headers(init?.headers);
+  headers.set("X-Employee-Passphrase", process.env.EMPLOYEE_PASSPHRASE ?? "");
+  const response = await fetch(`${API_URL}${path}`, { ...init, headers });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new ApiError(

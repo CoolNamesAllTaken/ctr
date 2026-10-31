@@ -2,14 +2,15 @@
 
 import { refresh } from "next/cache";
 import { ApiError, apiFetch } from "@/lib/api";
+import { requireEmployee } from "@/lib/employee";
 import { type ActionState, errorState } from "./action-state";
 import type { Train } from "./types";
 
-// TODO: check the employee's session here once employee login exists.
 export async function createTrain(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  await requireEmployee();
   // Each station has a "stop-<id>" time input; blank means the train skips it.
   const arrivals = [...formData.entries()]
     .filter(([key, value]) => key.startsWith("stop-") && value !== "")
@@ -42,8 +43,8 @@ export async function createTrain(
   }
 }
 
-// TODO: check the employee's session here once employee login exists.
 export async function loadStarterData(): Promise<ActionState> {
+  await requireEmployee();
   try {
     const created = await apiFetch<Record<string, number>>(
       "/api/starter-data/",
