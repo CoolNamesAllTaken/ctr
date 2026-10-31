@@ -272,6 +272,9 @@ class V12Engine:
         self.send({"t": "doorSound", "v": c.get("door_sound", "recorded")}, "doorSound")
         for bus, env in c.get("env", {}).items():
             self.send({"t": "busEnv", "bus": bus, "env": env}, "busEnv:" + bus)
+        # the horn on FRONT only: the trailing car's outside speaker (REAR) gets the bell and the train, not the horn
+        # (buses.js matrix: bell -6 dB on REAR); the app moves FRONT / REAR to the cars by direction (cars.py)
+        self.send({"t": "busConfig", "hornRoute": "front"}, "busConfig")
 
     def load_doors(self, folder, name="doors_v10"):
         self.send({"t": "doorFiles", "dir": str(folder), "name": name}, "doorFiles")

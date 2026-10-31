@@ -1,5 +1,6 @@
 """Recordings in the browser: upload a WAV and an MP3 on the settings page (decoded by the browser), send the MP3 to
-the front speaker only and pin it, play it from the engineer page, and find it on the front card's PCM (fake audio).
+the front speaker only and pin it, play it from the engineer page, and find it on the front speaker's PCM (default
+speakers, car A leading: A ext = USB #1 left; the insides are the right channels; fake audio).
 Also: a file that isn't audio is refused, and the theme toggle is remembered. Playwright, as test_sliders.py."""
 
 import json
@@ -63,14 +64,11 @@ def test_upload_pin_and_play(app, tmp_path):  # noqa: F811
         btn.click()
         eng.wait_for_selector("#recs .recbtn.on")
         eng.wait_for_timeout(800)
-        jack = sorted(audio.glob("jack-*.raw"), key=lambda p: p.stat().st_mtime)[-1]
-        x = np.frombuffer(jack.read_bytes()[: jack.stat().st_size // 4 * 4], "<i2").reshape(-1, 2) / 32768
-        seg = x[-int(0.5 * SR):, 0]
-        assert level_at(seg, 660) > 0.05 and level_at(seg, 990) > 0.05  # both channels of the MP3, mixed to mono
-        inside = sorted(audio.glob("usb-*.raw"), key=lambda p: p.stat().st_mtime)
-        if inside:  # inside (USB #1) must not get it
-            y = np.frombuffer(inside[-1].read_bytes()[: inside[-1].stat().st_size // 4 * 4], "<i2").reshape(-1, 2)
-            assert level_at(y[-int(0.5 * SR):, 0] / 32768, 660) < 0.005
+        dac1 = sorted(audio.glob("usb-1.2-*.raw"), key=lambda p: p.stat().st_mtime)[-1]
+        x = np.frombuffer(dac1.read_bytes()[: dac1.stat().st_size // 4 * 4], "<i2").reshape(-1, 2) / 32768
+        seg = x[-int(0.5 * SR):]
+        assert level_at(seg[:, 0], 660) > 0.05 and level_at(seg[:, 0], 990) > 0.05  # A ext: both MP3 channels, mono
+        assert level_at(seg[:, 1], 660) < 0.005  # A int (inside) doesn't get it
         eng.wait_for_selector("#recs .recbtn.on", state="detached", timeout=5000)  # 1 s file: ends by itself
 
         eng.locator(".themebtn").click()

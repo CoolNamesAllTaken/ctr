@@ -18,7 +18,9 @@ import tempfile
 import threading
 from pathlib import Path
 
-VERSION = 1
+from . import cars
+
+VERSION = 2  # 2: cars A / B (direction, four speakers, per-car lights)
 DIR = Path(os.environ.get("CALTREAT_CONFIG_DIR") or Path.home() / ".config" / "caltreat")
 FILE = "config.json"
 OLD_BOARDS_FILE = "boards.json"
@@ -44,16 +46,16 @@ RELAY_CHANNELS = 4
 # kind: manual = off / on / flash from the engineer page; doors = on while the doors are open, flashing while they
 # move; crossing = flashing while a crossing signal sounds; horn = on while the horn sounds; bell = on while the
 # bell rings. (id, default name, kind, symbol)
+# The per-car lamps (headlight, ditch L / R, markers; cars.py) follow the direction by themselves.
 BUILTIN_FUNCTIONS = [
-    ("head", "Headlights", "manual", "☀"),
-    ("markers", "Markers", "manual", "◆"),
     ("interior", "Interior", "manual", "▢"),
     ("doors", "Door lights", "doors", "▯"),
     ("crossing", "Crossing flash", "crossing", "✕"),
     ("horn", "Horn lamp", "horn", "▲"),
     ("bell", "Bell lamp", "bell", "♫"),
 ]
-KINDS = ("manual", "doors", "crossing", "horn", "bell")
+KINDS = ("manual", "doors", "crossing", "horn", "bell", *cars.CAR_KINDS)
+CAR_FUNCTION_IDS = {f[0] for f in cars.CAR_FUNCTIONS}
 ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 DEVICE_RE = re.compile(r"^(jack|none|usb#[1-9]|usb:[0-9]+(\.[0-9]+)*)$")
 UID_RE = re.compile(r"^[0-9A-F]{4,32}$")
@@ -70,23 +72,22 @@ def defaults():
         "env": {"front": "dry", "rear": "dry"},  # outside sound per speaker (INSIDE is always inside the car)
         "timing": "costume",
         "depart_horn": True,
-        "speakers": {
-            "front": {"device": "jack", "ch": "both", "level": 100},
-            "inside": {"device": "usb#1", "ch": "both", "level": 100},
-            "rear": {"device": "none", "ch": "both", "level": 100},
-        },
+        "direction": "A",  # the reverser: which car leads (cars.py)
+        "speakers": cars.default_speakers(),  # a_ext, a_int, b_ext, b_int: card + channel each
+        "ditch": {"mode": "wigwag", "rate": 60},  # wigwag (while moving) or fra; flashes / min per lamp
+        "lights_on": True,  # master switch for the per-car lamps (engineer page)
         "volumes": {},  # ALSA card volume % by device ("jack", "usb:1.2"); unset = leave as it is
         "intercom": {"mic_gain_db": 0, "level": 80, "duck_db": -18, "timeout_s": 60},
-        "functions": [{"id": i, "name": n, "kind": k, "symbol": s} for i, n, k, s in BUILTIN_FUNCTIONS],
+        "functions": [{"id": i, "name": n, "kind": k, "symbol": s} for i, n, k, s in BUILTIN_FUNCTIONS]
+        + cars.car_function_defs(),
         "horn_flash": True,  # headlights flash (alternate) with the horn, as ditch lights at crossings
-        "relay": [{"fn": "head", "alt": False}, {"fn": "head", "alt": True},
-                  {"fn": "markers", "alt": False}, {"fn": "markers", "alt": True}],
+        "relay": [dict(o) for o in cars.DEFAULT_RELAY],
         "boards": {},  # chip ID -> {"name": "A", "outputs": [{"fn": id or None, "alt": bool} x 8]}
     }
 
 
 def board_defaults(name):
-    return {"name": name, "outputs": [{"fn": None, "alt": False} for _ in range(BOARD_PINS)]}
+    return {"name": name, "outputs": cars.default_board_outputs(name, BOARD_PINS)}
 
 
 def _num(v, lo, hi):
@@ -143,7 +144,7 @@ def validate(c):
         errs.append("speakers: not an object")
     else:
         for k, s in sp.items():
-            if k not in SPEAKERS or not isinstance(s, dict):
+            if k not in (*cars.PHYS, *SPEAKERS) or not isinstance(s, dict):  # front / inside / rear: version 1
                 errs.append(f"speakers.{k}: unknown speaker or not an object")
                 continue
             if not isinstance(s.get("device"), str) or not DEVICE_RE.match(s["device"]):
@@ -162,6 +163,14 @@ def validate(c):
         for k, lo, hi in (("mic_gain_db", -20, 30), ("level", 0, 100), ("duck_db", -60, 0), ("timeout_s", 5, 600)):
             if k in ic and not _num(ic[k], lo, hi):
                 errs.append(f"intercom.{k}: not {lo} to {hi}")
+    if c.get("direction", "A") not in cars.DIRECTIONS:
+        errs.append("direction: A or B")
+    if not isinstance(c.get("lights_on", True), bool):
+        errs.append("lights_on: not true/false")
+    dt = c.get("ditch", {})
+    if not isinstance(dt, dict) or dt.get("mode", "wigwag") not in cars.DITCH_MODES or \
+            not _num(dt.get("rate", 60), cars.RATE_MIN, cars.RATE_MAX):
+        errs.append(f"ditch: mode one of {', '.join(cars.DITCH_MODES)}, rate {cars.RATE_MIN}-{cars.RATE_MAX}")
     fns = c.get("functions", [])
     fn_ids = set()
     builtin = {f[0] for f in BUILTIN_FUNCTIONS}  # always there (complete() adds them back)
@@ -181,7 +190,10 @@ def validate(c):
             errs.append(f"functions[{i}].kind: one of {', '.join(KINDS)}")
         if not isinstance(f.get("symbol", ""), str) or len(f.get("symbol", "")) > 4:
             errs.append(f"functions[{i}].symbol: up to 4 characters")
-    fn_ids |= builtin
+        if f.get("kind") in cars.CAR_KINDS and (f.get("car") not in ("a", "b") or
+                                                 f.get("side", "l") not in ("l", "r")):
+            errs.append(f"functions[{i}]: car a or b (ditch lights: side l or r)")
+    fn_ids |= builtin | CAR_FUNCTION_IDS
     relay = c.get("relay", [{}] * RELAY_CHANNELS)
     if not isinstance(relay, list) or len(relay) != RELAY_CHANNELS:
         errs.append(f"relay: a list of {RELAY_CHANNELS} outputs")
@@ -215,13 +227,14 @@ def complete(c):
     """c with every missing key filled in from the defaults (c is not changed). Built-in functions always exist."""
     d = defaults()
     out = copy.deepcopy(c)
+    if out.get("version", 1) < 2:
+        migrate_v1(out)
     for k, v in d.items():
         if k not in out:
             out[k] = copy.deepcopy(v)
-        elif isinstance(v, dict) and k in ("mix", "mix12", "intercom", "env"):
+        elif isinstance(v, dict) and k in ("mix", "mix12", "intercom", "env", "ditch"):
             out[k] = {**v, **out[k]}
-    for k, v in d["speakers"].items():
-        out["speakers"][k] = {**v, **out["speakers"].get(k, {})}
+    out["speakers"] = {k: {**v, **out["speakers"].get(k, {})} for k, v in d["speakers"].items()}
     for k, v in d["layers"].items():
         out["layers"][k] = {**v, **out["layers"].get(k, {})}
     have = {f["id"] for f in out["functions"]}
@@ -239,6 +252,24 @@ def complete(c):
             o.setdefault("alt", False)
     out["version"] = VERSION
     return out
+
+
+def migrate_v1(c):
+    """Version 1 -> 2 in place: front / inside / rear speakers -> the four car speakers; a relay mapping still at the
+    old defaults (headlights, markers) -> the per-car lamps, dropping the old Headlights / Markers functions if
+    nothing uses them any more. Changed setups are kept."""
+    if isinstance(c.get("speakers"), dict):
+        c["speakers"] = cars.migrate_speakers(c["speakers"])
+    relay = c.get("relay")
+    if isinstance(relay, list) and [{"fn": o.get("fn"), "alt": o.get("alt", False)} for o in relay if
+                                    isinstance(o, dict)] == cars.OLD_DEFAULT_RELAY:
+        c["relay"] = [dict(o) for o in cars.DEFAULT_RELAY]
+        used = {o.get("fn") for b in (c.get("boards") or {}).values() if isinstance(b, dict)
+                for o in b.get("outputs", []) if isinstance(o, dict)}
+        if isinstance(c.get("functions"), list):
+            c["functions"] = [f for f in c["functions"] if not (isinstance(f, dict) and f.get("id") in
+                                                                ("head", "markers") and f["id"] not in used)]
+    c["version"] = 2
 
 
 def parse(text):

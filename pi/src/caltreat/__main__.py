@@ -1040,7 +1040,7 @@ import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 from nicegui import app, run, ui
 
-from . import hw, lcfw, lcfw_ui, recordings, recordings_ui, theme
+from . import cars, hw, lcfw, lcfw_ui, recordings, recordings_ui, theme
 from .config import (
     BOARD_PINS,
     BUILTIN_FUNCTIONS,
@@ -1770,6 +1770,7 @@ class Router:
     The speaker test tone plays on any card and channel. INSIDE's card (or the jack, or any) sets the pace;
     with no card at all the engine still runs on the clock (so the train keeps moving and sequences keep going)."""
 
+    XFADE = int(0.06 * SR)  # direction change: 60 ms crossfade, no click
     TEST_FREQ = 440.0
     TEST_LEVEL = 10 ** (-6 / 20)
     REPLAN = 2.0  # s between checks for plugged / unplugged cards
@@ -1784,6 +1785,8 @@ class Router:
         self.test_env = 0.0
         self.duck = 1.0
         self.recordings = None  # recordings.Player: uploaded recordings, mixed per speaker
+        self.dirn = self.prev_dirn = cfg.data.get("direction", "A")  # direction being played, and before a change
+        self.xf = self.XFADE
         self.running = False
         self.thread = None
         self.dirty = True
@@ -1801,7 +1804,7 @@ class Router:
     def _plan(self):
         usb = hw.usb_outputs()
         plan, status = {}, {}
-        for sp in SPEAKERS:
+        for sp in cars.PHYS:  # the four speakers; which bus each plays follows the direction (_run)
             s = self.cfg.data["speakers"][sp]
             card, desc = hw.resolve(s["device"], usb)
             key = None
@@ -1867,7 +1870,7 @@ class Router:
                 except Exception as e:  # never let a config surprise stop the engine
                     self.error = f"speaker plan: {e}"
                     print(f"caltreat: {self.error}", file=sys.stderr)
-            bus = self.audio.render_buses()  # {front, inside, rear}: each speaker's own mix
+            bus = self.audio.render_buses()  # {front, inside, rear}: each bus's own mix
             t_block = self.audio.t - BLOCK
             ic = self.intercom.pull(BLOCK, t_block)
             duck_to = self.intercom.duck()
@@ -1877,14 +1880,33 @@ class Router:
             rec = self.recordings.pull(BLOCK) if self.recordings else {}  # {speaker: (recordings, train gain)}
             test_key = getattr(self, "test_key", None)
             test_mask = _mask(self.test[1]) if self.test else (1.0, 1.0)
+            # direction (cars.py): the leading car's exterior plays FRONT, the trailing one's REAR; a change fades
+            # each speaker from its old bus to its new one
+            dirn = self.cfg.data.get("direction", "A")
+            if dirn != self.dirn:
+                self.prev_dirn, self.dirn, self.xf = self.dirn, dirn, 0
+            w = np.minimum((self.xf + np.arange(BLOCK) + 1) / self.XFADE, 1.0) if self.xf < self.XFADE else None
+            self.xf += BLOCK
+            feeds = {}
+
+            def feed(r):  # a bus as the speakers get it: ducked for the intercom and recordings, plus them
+                if r not in feeds:
+                    sig = bus[r] * (g if r == "inside" else 1.0)
+                    if r in rec:  # recordings, ducking the train while they play
+                        sig = sig * rec[r][1] + rec[r][0]
+                    if r == "inside" and ic is not None:
+                        sig = sig + ic
+                    feeds[r] = sig
+                return feeds[r]
+
             for key, p in self.plan.items():
                 frames = np.zeros((BLOCK, 2))
                 for sp, mask, gain in p["outs"]:
-                    sig = bus[sp] * gain * (g if sp == "inside" else 1.0)
-                    if sp in rec:  # recordings at the speaker's level, ducking the train while they play
-                        sig = sig * rec[sp][1] + rec[sp][0] * gain
-                    if sp == "inside" and ic is not None:
-                        sig = sig + ic
+                    r = cars.role(sp, self.dirn)
+                    sig = feed(r)
+                    if w is not None and (r0 := cars.role(sp, self.prev_dirn)) != r:
+                        sig = sig * w + feed(r0) * (1 - w)
+                    sig = sig * gain
                     frames[:, 0] += sig * mask[0]
                     frames[:, 1] += sig * mask[1]
                 if tone is not None and key == test_key:
@@ -1894,7 +1916,7 @@ class Router:
                 if dev:
                     dev.push(frames, t_block)
             # pace by the inside speaker's card (lowest latency for the intercom), else the jack, else any working
-            inside = self.status.get("inside", {}).get("key")
+            inside = self.status.get("a_int", {}).get("key") or self.status.get("b_int", {}).get("key")
             cards = [self.devices.get(inside), self.devices.get(hw.JACK), *self.devices.values()]
             master = next((d for d in cards if d is not None and d.ok), None)
             if master is not None and master.wait_room(0.1):
@@ -1983,9 +2005,16 @@ class Io:
             self.last_horn = now
         phase = int(now / self.FLASH_HALF) % 2 == 0
         seq = self.seq_status()
+        crossing = a.busy_pattern == "crossing" or seq.get("phase") == "Crossing"
+        d = self.cfg.data
+        mph = a.motor.speed * cars.MPH_PER_SPEED
         out = {}
-        for f in self.cfg.data["functions"]:
+        for f in d["functions"]:
             kind, fid = f["kind"], f["id"]
+            if kind in cars.CAR_KINDS:  # headlights, ditch lights, markers: by direction and motion
+                out[fid] = cars.car_light(f, d["direction"], d["lights_on"], mph, now, d["ditch"],
+                                          d["horn_flash"] and now - self.last_horn < self.HORN_HOLD, crossing)
+                continue
             if kind == "manual":
                 mode = self.mode(fid)
                 if fid == "head" and mode == "on" and self.cfg.data["horn_flash"] and now - self.last_horn < self.HORN_HOLD:
@@ -1993,7 +2022,6 @@ class Io:
             elif kind == "doors":
                 mode = "off" if a.doors == "closed" else "on" if a.doors == "open" else "flash"
             elif kind == "crossing":
-                crossing = a.busy_pattern == "crossing" or seq.get("phase") == "Crossing"
                 mode = "flash" if crossing else "off"
             elif kind == "horn":
                 mode = "on" if a.horn_on else "off"
@@ -2681,10 +2709,12 @@ def engineer_html():
       <div class="lamp horn" id="lampHorn"><i></i>Horn</div>
       <div class="lamp bell" id="lampBell"><i></i>Bell</div>
       <div class="lamp door" id="lampDoor"><i></i>Doors</div>
+      <div class="lamp dir" id="lcdDir" title="Direction: which car leads">A fwd</div>
     </div>
     <div class="v"><span id="mph">0</span><small>mph</small></div>
     <div class="v"><span id="hz">0</span><small>Hz</small></div>
   </section>
+  {REVERSER}
   <section class="seqs" aria-label="Sequences">
     <button class="sq" id="sqDepart" title="Depart (G): doors close (warning tone), closed and locked, brake release air, bell on before moving (GCOR 5.8.1), horn – – = release brakes, proceed (GCOR 5.8.2(3); off in Settings), power to cruise, bell off clear of the platform. Tap again to cancel." aria-label="Depart sequence">
       {RING}<svg class="ic" viewBox="0 0 40 40" aria-hidden="true"><path d="M4 31h32M8 25h14l6-8H8z"/><path d="M27 10l7 7-7 7M34 17H20"/></svg><b>Depart</b></button>
@@ -2725,7 +2755,7 @@ def engineer_html():
   </section>
   <section class="ctl">
     <h2 title="Lights: tap to cycle off / on / flash. What each light drives is set in Settings">Lights</h2>
-    <div class="lights">{lights}</div>
+    <div class="lights">{LIGHTS_MASTER}{lights}</div>
   </section>
   <footer class="foot">
     <p class="keys">Keys: <kbd>G</kbd> depart · <kbd>R</kbd> arrive · <kbd>X</kbd> crossing · <kbd>U</kbd> auto run · <kbd>Esc</kbd> stop sequence · <kbd>Space</kbd> horn (hold) · <kbd>T</kbd> talk (hold) · <kbd>B</kbd> bell · <kbd>D</kbd> doors · <kbd>A</kbd> air · <kbd>S</kbd> stop · <kbd>↑</kbd><kbd>↓</kbd> power · <kbd>0</kbd> power off · <kbd>1</kbd>–<kbd>9</kbd> horn signals · <kbd>L</kbd> headlights · <kbd>M</kbd> markers</p>
@@ -2742,6 +2772,29 @@ def errors():
     return " · ".join(e for e in errs if e)
 
 
+# Engineer page: the reverser (cars.py; static/cars.js) and the master switch for the per-car lamps
+REVERSER = ('<button class="rev" id="rev" type="button" aria-label="Direction (reverser)" title="Reverser: which car '
+            'leads (its headlight, ditch lights and horn). Changes only at a standstill with the power off">'
+            '<b class="ra">A</b><i aria-hidden="true">◀</i><b class="rb">B</b><span id="revTxt">A fwd</span>'
+            '<em id="revHint" aria-live="polite"></em></button>')
+LIGHTS_MASTER = ('<button class="lt" id="ltMaster" type="button" title="Headlights, ditch lights and markers of both '
+                 'cars (they follow the direction): on / off"><i aria-hidden="true">⏻</i><b>Lights</b><small></small>'
+                 '</button>')
+dir_refused = [0.0]  # when the reverser was last refused (shown for a moment)
+
+
+def set_direction(v):
+    """The reverser: only at a standstill, power off, no sequence running. False if refused."""
+    if v not in cars.DIRECTIONS or v == cfg.data["direction"]:
+        return True
+    if not cars.standstill(audio.motor.speed, audio.motor.throttle) or seq_status()["active"]:
+        dir_refused[0] = time.monotonic()
+        return False
+    cfg.data["direction"] = v
+    cfg.changed(0)
+    return True
+
+
 def engine_state(who):
     q = seq_status()
     talk = None
@@ -2755,6 +2808,8 @@ def engine_state(who):
                 "index": q.get("index")},
         "lights": {f["id"]: io.mode(f["id"]) for f in cfg.data["functions"] if f["kind"] == "manual"},
         "talk": talk, "err": errors(),
+        "dir": cfg.data["direction"], "dirRefused": time.monotonic() - dir_refused[0] < 2.5,
+        "lightsOn": cfg.data["lights_on"],
     }
 
 
@@ -2804,6 +2859,11 @@ def act(who, a, v):
             sequencer.cancel()
         elif a == "timing":
             set_timing(v)
+        elif a == "dir":
+            set_direction(str(v))
+        elif a == "lights_master":
+            cfg.data["lights_on"] = not cfg.data["lights_on"]
+            cfg.changed(0)
         elif a == "light":
             io.cycle(v)
 
@@ -2818,7 +2878,8 @@ def page_head(title):
 async def engineer(client):
     page_head("Caltreat")
     who = client.id
-    ui.add_head_html('<script src="/static/cab.js"></script>')
+    ui.add_head_html('<script src="/static/cab.js"></script><script src="/static/cars.js"></script>'
+                     '<link rel="stylesheet" href="/static/cars.css">')
     ui.html(engineer_html(), sanitize=False).classes("w-full")
     recordings_ui.engineer(recs, rec_player)  # pinned recordings
     ui.on("ct", lambda e: act(who, (e.args or {}).get("a"), (e.args or {}).get("v")))
@@ -2909,10 +2970,9 @@ def device_options():
 
 
 CH_LABEL = {"both": "L+R", "left": "L", "right": "R"}
-SPK = {"front": ("Front", "Outside, front cab"), "inside": ("Inside", "Passengers + the intercom"),
-       "rear": ("Rear", "Outside, back")}
+ROLE_SYM = {"front": "▲ front", "inside": "▣ inside", "rear": "▼ rear"}  # what a speaker plays now
 KIND_LABEL = {"manual": "manual (engineer page)", "doors": "doors open / moving", "crossing": "crossing signal",
-              "horn": "while the horn sounds", "bell": "while the bell rings"}
+              "horn": "while the horn sounds", "bell": "while the bell rings", **cars.KIND_LABEL}
 
 
 def save():
@@ -3133,14 +3193,16 @@ async def settings(client):
 
             # --- speakers ---
             with el("section", "ctl set"):
-                el("h2", "", "Speakers", "Which sound card and channel each speaker is on. Each plays its own v12 "
-                                         "mix (outside front, inside, outside rear); the intercom plays on Inside. "
-                                         "▶ = 440 Hz test tone")
+                el("h2", "", "Speakers", "Each car's outside and inside speaker: a sound card (USB DAC, by port) "
+                                         "and its L or R half. The leading car's outside speaker plays the front mix "
+                                         "(horn, bell, train), the trailing one the rear mix (bell, train, no horn); "
+                                         "both inside speakers play the inside mix and the intercom. ▶ = 440 Hz test "
+                                         "tone")
                 with el("div", "rows"):
-                    for sp in SPEAKERS:
+                    for sp in cars.PHYS:
                         s = d["speakers"][sp]
                         with el("div", "srow"):
-                            name, tip = SPK[sp]
+                            name, tip = cars.PHYS_LABEL[sp]
                             with el("div", "nm", title=tip):
                                 ui.html(name, sanitize=False, tag="span")
                                 st = ui.html("", sanitize=False, tag="small")
@@ -3159,6 +3221,7 @@ async def settings(client):
                                 r = router.status.get(sp, {})
                                 ok = r.get("ok")
                                 txt = "—" if ok is None else (f"✓ {r.get('card')}" if ok else f"✗ {r.get('desc')}")
+                                txt = f"{ROLE_SYM[cars.role(sp, d['direction'])]} {txt}"
                                 st.set_content(_esc(txt))
                                 st.classes(replace="bad" if ok is False else "")
                                 on = router.test is not None and router.test[0] == d["speakers"][sp]["device"] \
@@ -3276,12 +3339,21 @@ async def settings(client):
                     sbtn("＋", lambda: ui.run_javascript(
                         f"getHtmlElement({new_name.id}).dispatchEvent(new Event('change'))"), "Add a light function")
                 with el("div", "srow"):
-                    el("div", "nm", "Horn ☀", "Headlights flash (alternate A/B) while the horn sounds and 5 s after, "
-                                             "as ditch lights at crossings")
+                    el("div", "nm", "Ditch ◐◑", "Ditch lights at the leading car (the trailing car shows its markers)")
                     with el("div", "ctlz"):
-                        for v, lab in ((True, "Flash with horn"), (False, "Steady")):
-                            sbtn(lab, lambda v=v: (d.__setitem__("horn_flash", v), save(), body.refresh()), None,
-                                 "on" if d["horn_flash"] == v else "")
+                        for v, lab, tip in (("wigwag", "⇆ Wig-wag", "Alternate L / R while moving (over 1 mph), "
+                                                                     "steady when stopped"),
+                                            ("fra", "FRA", "49 CFR 229.125: steady; alternate with the horn (and 5 s "
+                                                           "after) and at crossings")):
+                            sbtn(lab, lambda v=v: (d["ditch"].__setitem__("mode", v), save(), body.refresh()), tip,
+                                 "on" if d["ditch"]["mode"] == v else "")
+                        if d["ditch"]["mode"] == "fra":
+                            sbtn("▲ horn", lambda: (d.__setitem__("horn_flash", not d["horn_flash"]), save(),
+                                                    body.refresh()),
+                                 "Flash with the horn (and 5 s after): on / off", "on" if d["horn_flash"] else "")
+                slider("Flash rate", cars.RATE_MIN, cars.RATE_MAX, d["ditch"]["rate"],
+                       lambda v: (d["ditch"].__setitem__("rate", v), save()),
+                       "Flashes per minute, each lamp (FRA: 40-180)", "/min")
 
             with el("section", "ctl set"):
                 el("h2", "", "Relay shield", "The Pi's 4-channel relay shield (BCM GPIO 4, 22, 6, 26)")
