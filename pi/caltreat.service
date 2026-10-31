@@ -2,7 +2,7 @@
 # ~/.config/systemd/user/ on the Pi. Linger is enabled for the caltreat user,
 # so this starts at boot without anyone logging in.
 [Unit]
-Description=Caltreat train lights and sound web app (http 8080, https 8443)
+Description=Caltreat train lights and sound web app (http 80 + 8080, https 443 + 8443)
 After=sound.target
 
 [Service]

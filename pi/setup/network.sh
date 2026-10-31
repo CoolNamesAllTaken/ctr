@@ -102,7 +102,10 @@ put_file() {
   if [[ -z "$secret" ]]; then
     diff -u --label "$path (now)" --label "$path (new)" "$path" <(printf '%s' "$new") 2>/dev/null |
       tail -n +3 | sed 's/^/      /' || true
-    [[ -f "$path" ]] || printf '%s' "$new" | sed 's/^/      + /'
+    if [[ ! -f "$path" ]]; then
+      if (($(printf '%s' "$new" | wc -l) <= 12)); then printf '%s' "$new" | sed 's/^/      + /'
+      else note "  (new file, $(printf '%s' "$new" | wc -l) lines: setup/files/$(basename "$path"))"; fi
+    fi
   else
     note "  (holds a password: not shown)"
   fi
@@ -212,6 +215,62 @@ else
   note "Wi-Fi country: $reg"
 fi
 
+# ---------------------------------------------------------------- passwords (all asked before anything is written)
+if [[ -n "${AP_PASS+x}" ]]; then
+  if ((${#AP_PASS} < 8 || ${#AP_PASS} > 63)); then
+    echo "AP_PASS must be 8-63 characters (WPA2)." >&2
+    exit 1
+  fi
+  AP_PSK="$(kf_escape "$AP_PASS")"
+else
+  AP_PSK="$(kf_get psk "$AP_FILE")"
+  if [[ -z "$AP_PSK" ]]; then
+    while :; do
+      ask AP_PASS "Password for \"$AP_SSID\" (8-63 characters; phones on the train use it): " silent || {
+        ((DRY)) && { AP_PSK="<password>"; break; }
+        echo "Set AP_PASS (8-63 characters) for the Pi's own Wi-Fi." >&2
+        exit 1
+      }
+      if ((${#AP_PASS} >= 8 && ${#AP_PASS} <= 63)); then AP_PSK="$(kf_escape "$AP_PASS")"; break; fi
+      echo "8-63 characters, please."
+    done
+  fi
+fi
+
+# The Wi-Fi to join: a connection for it may exist already (Raspberry Pi Imager makes "preconfigured").
+sta_con=""
+while IFS= read -r line; do
+  name="${line%:*}"
+  type="${line##*:}"
+  name="${name//\\:/:}"
+  [[ "$type" == 802-11-wireless && "$name" != "$AP_CON" ]] || continue
+  if [[ "$(nmcli -g 802-11-wireless.ssid connection show "$name" 2>/dev/null)" == "$STA_SSID" ]]; then
+    sta_con="$name"
+    break
+  fi
+done < <(nmcli -t -f NAME,TYPE connection show 2>/dev/null)
+if [[ -z "$sta_con" || "$sta_con" == "$STA_CON" ]]; then
+  if [[ -z "${STA_PASS+x}" ]]; then
+    STA_PASS="$(kf_get psk "$STA_FILE")"
+    if [[ -z "$STA_PASS" && ! -f "$STA_FILE" ]]; then
+      if ! ask STA_PASS "Password of the Wi-Fi \"$STA_SSID\" (empty: an open network): " silent; then
+        ((DRY)) || { echo "Set STA_PASS (the password of \"$STA_SSID\"; empty for an open network)." >&2; exit 1; }
+        STA_PASS="<password>"
+      fi
+      STA_PASS="$(kf_escape "$STA_PASS")"
+    fi
+  else
+    STA_PASS="$(kf_escape "$STA_PASS")"
+  fi
+  if [[ -n "$STA_PASS" && "$STA_PASS" != "<password>" ]] && ((${#STA_PASS} < 8)); then
+    echo "The Wi-Fi password must be at least 8 characters (WPA2)." >&2
+    exit 1
+  fi
+elif [[ -n "${STA_PASS+x}" ]] && ((${#STA_PASS} < 8)); then
+  echo "The Wi-Fi password must be at least 8 characters (WPA2)." >&2
+  exit 1
+fi
+
 # ---------------------------------------------------------------- 1. ports 80 and 443
 say "Ports 80 and 443 for the app (a user service)"
 put_file "$SYSCTL_FILE" 644 <<'EOF'
@@ -237,17 +296,6 @@ SHARED_RADIO=$SHARED_RADIO
 EOF
 
 say "Joining the Wi-Fi \"$STA_SSID\" ($STA_IFACE)"
-sta_con=""
-while IFS= read -r line; do
-  name="${line%:*}"
-  type="${line##*:}"
-  name="${name//\\:/:}"
-  [[ "$type" == 802-11-wireless && "$name" != "$AP_CON" ]] || continue
-  if [[ "$(nmcli -g 802-11-wireless.ssid connection show "$name" 2>/dev/null)" == "$STA_SSID" ]]; then
-    sta_con="$name"
-    break
-  fi
-done < <(nmcli -t -f NAME,TYPE connection show 2>/dev/null)
 if [[ -n "$sta_con" && "$sta_con" != "$STA_CON" ]]; then
   # A connection made earlier (e.g. by Raspberry Pi Imager: "preconfigured"): keep it and just adjust it, so
   # running this over that same Wi-Fi doesn't drop the SSH session.
@@ -259,61 +307,25 @@ if [[ -n "$sta_con" && "$sta_con" != "$STA_CON" ]]; then
     run nmcli connection modify "$sta_con" wifi-sec.key-mgmt wpa-psk wifi-sec.psk --secret "$STA_PASS"
   fi
 else
-  if [[ -z "${STA_PASS+x}" ]]; then
-    STA_PASS="$(kf_get psk "$STA_FILE")"
-    if [[ -z "$STA_PASS" && ! -f "$STA_FILE" ]]; then
-      if ! ask STA_PASS "Password of the Wi-Fi \"$STA_SSID\" (empty: an open network): " silent; then
-        ((DRY)) || { echo "Set STA_PASS (the password of \"$STA_SSID\"; empty for an open network)." >&2; exit 1; }
-        STA_PASS="<password>"
-      fi
-      STA_PASS="$(kf_escape "$STA_PASS")"
-    fi
-  else
-    STA_PASS="$(kf_escape "$STA_PASS")"
-  fi
-  if [[ -n "$STA_PASS" && "$STA_PASS" != "<password>" ]] && ((${#STA_PASS} < 8)); then
-    echo "The Wi-Fi password must be at least 8 characters (WPA2)." >&2
-    exit 1
-  fi
   uuid="$(kf_get uuid "$STA_FILE")"
   [[ -n "$uuid" ]] || uuid="$(cat /proc/sys/kernel/random/uuid)"
-  {
+  put_file "$STA_FILE" 600 secret < <(
     printf '[connection]\nid=%s\nuuid=%s\ntype=wifi\ninterface-name=%s\nautoconnect=true\n' "$STA_CON" "$uuid" "$STA_IFACE"
     printf 'autoconnect-priority=10\n# 0: never give up (NetworkManager stops after 4 tries otherwise)\nautoconnect-retries=0\n\n'
     printf '[wifi]\nmode=infrastructure\nssid=%s\n# 2: power saving off (it makes the shared radio drop frames)\npowersave=2\n\n' "$(kf_escape "$STA_SSID")"
     [[ -n "$STA_PASS" ]] && printf '[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n' "$STA_PASS"
     printf '[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n'
-  } | put_file "$STA_FILE" 600 secret
+  )
 fi
 
 say "The Pi's own Wi-Fi \"$AP_SSID\" ($AP_IFACE, $AP_ADDR)"
-if [[ -n "${AP_PASS+x}" ]]; then
-  if ((${#AP_PASS} < 8 || ${#AP_PASS} > 63)); then
-    echo "AP_PASS must be 8-63 characters (WPA2)." >&2
-    exit 1
-  fi
-  AP_PSK="$(kf_escape "$AP_PASS")"
-else
-  AP_PSK="$(kf_get psk "$AP_FILE")"
-  if [[ -z "$AP_PSK" ]]; then
-    while :; do
-      ask AP_PASS "Password for \"$AP_SSID\" (8-63 characters; phones on the train use it): " silent || {
-        ((DRY)) && { AP_PSK="<password>"; break; }
-        echo "Set AP_PASS (8-63 characters) for the Pi's own Wi-Fi." >&2
-        exit 1
-      }
-      if ((${#AP_PASS} >= 8 && ${#AP_PASS} <= 63)); then AP_PSK="$(kf_escape "$AP_PASS")"; break; fi
-      echo "8-63 characters, please."
-    done
-  fi
-fi
 uuid="$(kf_get uuid "$AP_FILE")"
 [[ -n "$uuid" ]] || uuid="$(cat /proc/sys/kernel/random/uuid)"
 chan="$(kf_get channel "$AP_FILE")"  # keep the channel caltreat-ap-channel picked last
 [[ -n "$chan" ]] || chan="$AP_CHANNEL"
 band="bg"
 ((chan > 14)) && band=a
-{
+put_file "$AP_FILE" 600 secret < <(
   printf '[connection]\nid=%s\nuuid=%s\ntype=wifi\ninterface-name=%s\nautoconnect=true\n' "$AP_CON" "$uuid" "$AP_IFACE"
   printf 'autoconnect-priority=100\nautoconnect-retries=0\n\n'
   printf '[wifi]\nmode=ap\nssid=%s\nband=%s\n# follows the joined Wi-Fi (caltreat-ap-channel)\nchannel=%s\npowersave=2\n\n' \
@@ -321,20 +333,20 @@ band="bg"
   printf '[wifi-security]\nkey-mgmt=wpa-psk\nproto=rsn;\npairwise=ccmp;\ngroup=ccmp;\npsk=%s\n\n' "$AP_PSK"
   printf '# "shared": DHCP and DNS (dnsmasq) for phones, and internet through the Pi when it has some\n'
   printf '[ipv4]\nmethod=shared\naddress1=%s\n\n[ipv6]\nmethod=disabled\n' "$AP_ADDR"
-} | put_file "$AP_FILE" 600 secret
+)
 
 say "Access point interface and channel helpers"
 if ((SHARED_RADIO)); then
-  template caltreat-uap0 | put_file "$SBIN/caltreat-uap0" 755
-  template caltreat-uap0.service | put_file "$UNITS/caltreat-uap0.service" 644
+  put_file "$SBIN/caltreat-uap0" 755 < <(template caltreat-uap0)
+  put_file "$UNITS/caltreat-uap0.service" 644 < <(template caltreat-uap0.service)
 else
   del_file "$UNITS/caltreat-uap0.service"
   del_file "$SBIN/caltreat-uap0"
 fi
-template caltreat-ap-channel | put_file "$SBIN/caltreat-ap-channel" 755
-template caltreat-ap-channel.service | put_file "$UNITS/caltreat-ap-channel.service" 644
-template caltreat-ap-channel.timer | put_file "$UNITS/caltreat-ap-channel.timer" 644
-template 90-caltreat-ap | put_file "$DISPATCH_FILE" 755
+put_file "$SBIN/caltreat-ap-channel" 755 < <(template caltreat-ap-channel)
+put_file "$UNITS/caltreat-ap-channel.service" 644 < <(template caltreat-ap-channel.service)
+put_file "$UNITS/caltreat-ap-channel.timer" 644 < <(template caltreat-ap-channel.timer)
+put_file "$DISPATCH_FILE" 755 < <(template 90-caltreat-ap)
 put_file "$NMCONF_FILE" 644 <<EOF
 # Installed by Caltreat's pi/setup/network.sh
 [device-caltreat-ap]
