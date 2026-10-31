@@ -8,8 +8,9 @@ database.
 
 > [!NOTE]
 > The employee portal (`/employee`) is behind one shared passphrase, not
-> per-person accounts. Anyone who has it can add riders, change card balances,
-> record taps and post alerts. Change it (step 4) if it gets around.
+> per-person accounts. Anyone who has it can add riders, change card balances
+> and post alerts. Change it (step 4) if it gets around. Recording taps
+> (`POST /api/taps/`) is open to anyone, so kiosks don't need the passphrase.
 
 ## What you'll end up with
 

@@ -515,7 +515,8 @@ def list_taps(request, limit: int = 20):
     )[:limit]
 
 
-@router.post("/taps/", response={201: TapResultOut})
+# Public so kiosks can post taps without the employee passphrase.
+@router.post("/taps/", response={201: TapResultOut}, auth=None)
 def create_tap(request, payload: TapIn):
     """Record a card tap at a kiosk, charging or refunding the fare."""
     card_uid = normalize_uid(payload.card_uid)
