@@ -114,3 +114,12 @@ def test_listeners_run_on_save(tmp_path):
     cfg.data["mix"]["bell"] = 10
     cfg.save()
     assert seen == [10]
+
+
+@pytest.mark.parametrize("text", ['{"version": 2, "mix": {"horn": 33}}', '{"version": 1, "mix": {"horn": 999}}', "{oops"])
+def test_unusable_file_is_kept_before_defaults_overwrite_it(tmp_path, text):
+    (tmp_path / "config.json").write_text(text)
+    cfg = Config.load(tmp_path)
+    assert cfg.error and "config.json.bad" in cfg.error
+    cfg.save()  # e.g. a board found at boot
+    assert (tmp_path / "config.json.bad").read_text() == text

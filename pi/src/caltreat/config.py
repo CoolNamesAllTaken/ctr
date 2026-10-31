@@ -13,6 +13,7 @@ import copy
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
 from pathlib import Path
@@ -276,7 +277,19 @@ class Config:
                 cfg.data = complete(raw)
         elif cfg.error is None:
             cfg._migrate()
+        if cfg.error:
+            cfg._keep_bad()
         return cfg
+
+    def _keep_bad(self):
+        """The next save() replaces the file the app couldn't use (one from a newer version, a bad hand edit):
+        keep a copy (config.json.bad) so those settings can still be restored."""
+        bad = self.path.with_name(FILE + ".bad")
+        try:
+            shutil.copy2(self.path, bad)
+            self.error += f" (the file is kept as {bad})"
+        except OSError:
+            pass
 
     def _migrate(self):
         """First start: take the board names from the old boards.json (chip ID -> name)."""
