@@ -87,21 +87,30 @@ def car_function_defs():
     return out
 
 
-# Relay shield: channels 1-2 white (headlights), 3-4 red (markers)
+# The relay shield of config versions 1-2 (there is none on the train; config.migrate_v2 moves its mapping to the
+# boards): channels 1-2 white (headlights), 3-4 red (markers)
 DEFAULT_RELAY = [{"fn": "a_head", "alt": False}, {"fn": "b_head", "alt": False},
                  {"fn": "a_markers", "alt": False}, {"fn": "b_markers", "alt": False}]
 OLD_DEFAULT_RELAY = [{"fn": "head", "alt": False}, {"fn": "head", "alt": True},
                      {"fn": "markers", "alt": False}, {"fn": "markers", "alt": True}]
 
 
+# The walkers' four-colour stack light on each car's board (safety.py; both boards show the same)
+STACK_PINS = {4: "stack_green", 5: "stack_yellow", 6: "stack_red", 7: "stack_blue"}
+
+
 def default_board_outputs(name, pins):
     """A board named A or B (they are named in the order they are found) drives its car's lamps on GP0-GP3, the
-    MOSFET module's lights 1-4: ditch L, ditch R, headlight, markers. Others: nothing mapped."""
+    MOSFET module's lights 1-4: ditch L, ditch R, headlight, markers; and the stack light on GP4-GP7: green, yellow,
+    red, blue. Others: nothing mapped."""
     out = [{"fn": None, "alt": False} for _ in range(pins)]
     c = str(name).lower()
     if c in ("a", "b"):
         for i, k in enumerate(("ditch_l", "ditch_r", "head", "markers")[:pins]):
             out[i]["fn"] = f"{c}_{k}"
+        for i, fid in STACK_PINS.items():
+            if i < pins:
+                out[i]["fn"] = fid
     return out
 
 
