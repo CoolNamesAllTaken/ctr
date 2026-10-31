@@ -20,7 +20,6 @@ export async function createRider(
         name: formData.get("name"),
         costume: formData.get("costume"),
         card_uid: formData.get("card_uid"),
-        balance: formData.get("balance"),
       }),
     });
     refresh();

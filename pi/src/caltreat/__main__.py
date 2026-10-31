@@ -1036,11 +1036,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 from nicegui import app, run, ui
 
-from . import hw, lcfw, lcfw_ui, recordings, recordings_ui, theme
+from . import hw, lcfw, lcfw_ui, listen, network_ui, recordings, recordings_ui, theme
 from .config import (
     BOARD_PINS,
     BUILTIN_FUNCTIONS,
@@ -1073,7 +1072,6 @@ BRAKE_TIME = 10.0  # s, full speed to a halt with STOP ("Costume")
 BRAKE_TIME_REAL = 35.0  # s (~1 m/s², a service brake)
 LOOP = 1 << 18  # ~5.5 s noise loops
 PORT = int(os.environ.get("CALTREAT_PORT", "8080"))
-HTTPS_PORT = int(os.environ.get("CALTREAT_HTTPS_PORT", "8443"))
 STATIC = Path(__file__).parent / "static"
 
 # Lighting controller boards get DHCP addresses on eth0 (NetworkManager's shared connection: the Pi is
@@ -2547,86 +2545,11 @@ def intercom_api():
     return out
 
 
-# ---------- HTTPS (the microphone needs a secure page) ----------
-CERT = cfg.folder / "https-cert.pem"
-KEY = cfg.folder / "https-key.pem"
-
-
-def ensure_cert():
-    """A self-signed certificate for this Pi, made on first start (kept in the config folder, renewed 30 days
-    before it expires). Returns True if HTTPS can run."""
-    try:
-        if CERT.exists() and KEY.exists() and subprocess.run(
-                ["openssl", "x509", "-checkend", str(30 * 86400), "-noout", "-in", str(CERT)],
-                capture_output=True).returncode == 0:
-            return True
-        host = socket.gethostname().split(".")[0] or "caltreat"
-        names = [f"DNS:{host}.local", f"DNS:{host}", "DNS:localhost", "IP:127.0.0.1", "IP:192.168.50.1"]
-        try:
-            ips = subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()
-        except OSError:
-            ips = []
-        names += [f"IP:{ip}" for ip in ips if re.match(r"^\d+\.\d+\.\d+\.\d+$", ip) and f"IP:{ip}" not in names]
-        cfg.folder.mkdir(parents=True, exist_ok=True)
-        r = subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "825",
-                            "-keyout", str(KEY), "-out", str(CERT), "-subj", f"/CN={host}.local/O=Caltreat",
-                            "-addext", "subjectAltName=" + ",".join(names),
-                            "-addext", "extendedKeyUsage=serverAuth"], capture_output=True, text=True)
-        if r.returncode:
-            print(f"caltreat: could not make the HTTPS certificate: {r.stderr.strip()}", file=sys.stderr)
-            return False
-        KEY.chmod(0o600)
-        print(f"caltreat: made a self-signed HTTPS certificate for {', '.join(names)}", file=sys.stderr)
-        return True
-    except OSError as e:
-        print(f"caltreat: no HTTPS ({e})", file=sys.stderr)
-        return False
-
-
-class _QuietServer(uvicorn.Server):
-    """The HTTPS server runs beside NiceGUI's in the same event loop; NiceGUI's server handles the signals."""
-
-    @contextlib.contextmanager
-    def capture_signals(self):
-        yield
-
-
-https = {"server": None, "stopping": False}
-
-
-async def start_https():
-    """HTTPS beside NiceGUI's http server. If it can't start (e.g. the port is still taken after a restart) it tries
-    again, 2 s later, then 4, 8, ... up to every 60 s; plain http keeps working meanwhile."""
-    if HTTPS_PORT <= 0 or not await run.io_bound(ensure_cert):
-        return
-
-    async def serve():
-        delay = 2.0
-        while not https["stopping"]:
-            config = uvicorn.Config(app, host="0.0.0.0", port=HTTPS_PORT, ssl_certfile=str(CERT),
-                                    ssl_keyfile=str(KEY), lifespan="off", log_level="warning", ws="wsproto")
-            server = https["server"] = _QuietServer(config)
-            try:
-                await server.serve()
-            except (SystemExit, OSError) as e:
-                print(f"caltreat: HTTPS on port {HTTPS_PORT} failed ({e})", file=sys.stderr)
-            if https["stopping"]:
-                break
-            print(f"caltreat: retrying HTTPS in {delay:.0f} s", file=sys.stderr)
-            await asyncio.sleep(delay)
-            delay = min(60.0, delay * 2)
-
-    https["task"] = asyncio.get_running_loop().create_task(serve())
-
-
-def stop_https():
-    https["stopping"] = True
-    if https["server"]:
-        https["server"].should_exit = True
-
-
-app.on_startup(start_https)
-app.on_shutdown(stop_https)
+# ---------- HTTPS and the extra ports (listen.py) ----------
+# http on 80 beside NiceGUI's 8080, https on 443 and 8443 (the microphone needs a secure page)
+servers = listen.Listeners(app, cfg.folder)
+app.on_startup(servers.start)
+app.on_shutdown(servers.stop)
 
 
 def https_url(client):
@@ -2634,8 +2557,7 @@ def https_url(client):
         host = client.request.url.hostname or "caltreat.local"
     except AttributeError:
         host = "caltreat.local"
-    up = https["server"] is not None and https["server"].started
-    return f"https://{host}:{HTTPS_PORT}/" if up else ""
+    return servers.https_url(host)
 
 
 # ---------- pages ----------
@@ -3324,6 +3246,7 @@ async def settings(client):
                 lcfw_ui.section(finder, live)  # firmware versions and updates
 
             recordings_ui.section(recs, rec_player, live, el=el, sbtn=sbtn, slider=slider)
+            network_ui.section(servers)  # Wi-Fi joined / served, wired, ports (read-only)
 
             errs = ui.html("", sanitize=False, tag="div").classes("errs full")
             live.append(lambda: errs.set_content(_esc(errors())))

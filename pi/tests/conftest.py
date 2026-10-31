@@ -31,6 +31,7 @@ def _free_port():
 
 os.environ["CALTREAT_BOARD_PORT"] = str(_free_port())
 os.environ["CALTREAT_HTTPS_PORT"] = "0"
+os.environ["CALTREAT_HTTP_PORTS"] = ""  # no port 80 in tests
 os.environ["CALTREAT_ENGINE_WARMUP"] = "0"  # the v12 engine's warm-up (~15 s here) only matters for a Pi's CPU
 sys.path.insert(0, str(Path(__file__).parent))
 

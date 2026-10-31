@@ -1,22 +1,10 @@
-import type { Metadata } from "next";
-import { Suspense } from "react";
-import { apiFetch } from "@/lib/api";
-import { type Alert, DIRECTION_LABELS, type TrainRun } from "../types";
-import { BackendUnreachable, mutedClass } from "../ui";
+import { formatTime } from "../format";
+import { DIRECTION_LABELS, type TrainRun } from "../types";
+import { mutedClass } from "../ui";
 import { ClearDelayButton } from "./clear-delay-button";
-import { DelayForm } from "./delay-form";
-import { formatTime } from "./format";
 
-export const metadata: Metadata = {
-  title: "Live delays · Employee portal · ctr",
-};
-
-const dateFormat = new Intl.DateTimeFormat("en-US", {
-  dateStyle: "full",
-  timeZone: "America/Los_Angeles",
-});
-
-function TrainRunCard({ run }: { run: TrainRun }) {
+/** Today's run of a train, stop by stop once it's delayed. */
+export function TrainRunCard({ run }: { run: TrainRun }) {
   const maxDelay = Math.max(0, ...run.stops.map((stop) => stop.delay_minutes));
   const first = run.stops[0];
   const last = run.stops.at(-1);
@@ -88,67 +76,5 @@ function TrainRunCard({ run }: { run: TrainRun }) {
         </>
       )}
     </li>
-  );
-}
-
-async function Delays() {
-  let data: [TrainRun[], Alert[]];
-  try {
-    data = await Promise.all([
-      apiFetch<TrainRun[]>("/api/delays/"),
-      apiFetch<Alert[]>("/api/alerts/?active=true&limit=100"),
-    ]);
-  } catch {
-    return <BackendUnreachable />;
-  }
-  const [runs, alerts] = data;
-  const runsWithStops = runs.filter((run) => run.stops.length > 0);
-
-  if (runsWithStops.length === 0) {
-    return (
-      <p className={mutedClass}>
-        No trains scheduled yet. Add one on the Trains tab.
-      </p>
-    );
-  }
-
-  return (
-    <>
-      <section className="flex flex-col gap-4">
-        <h2 className="text-xl font-semibold">Set a delay</h2>
-        <p className={mutedClass}>
-          Delays today&apos;s run of a train from a station to the end of the
-          line; earlier stops keep the delay they had. Set it to 0 to put the
-          train back on time from that station. Optionally link an active alert
-          that explains the delay.
-        </p>
-        <DelayForm runs={runsWithStops} alerts={alerts} />
-      </section>
-
-      <section className="flex flex-col gap-4">
-        <h2 className="text-xl font-semibold">
-          Today&apos;s trains{" "}
-          <span className="text-base font-normal text-zinc-500">
-            ·{" "}
-            {dateFormat.format(
-              new Date(runsWithStops[0].stops[0].scheduled_at),
-            )}
-          </span>
-        </h2>
-        <ul className="flex flex-col gap-2">
-          {runsWithStops.map((run) => (
-            <TrainRunCard key={run.train_id} run={run} />
-          ))}
-        </ul>
-      </section>
-    </>
-  );
-}
-
-export default function DelaysPage() {
-  return (
-    <Suspense fallback={<p className="text-zinc-500">Loading…</p>}>
-      <Delays />
-    </Suspense>
   );
 }
