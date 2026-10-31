@@ -33,11 +33,11 @@ const MAP_COLOURS = {
   line: "#d8312c",
 };
 
-// Like caltrain.com's live map: grays, yellows and red by service type.
+// Like caltrain.com's live map: grays, blue, yellow and red by service type.
 const TRAIN_COLOURS: Record<ServiceType, { label: string; className: string }> =
   {
     local: { label: "Local", className: "bg-[#8a8d8f] text-white" },
-    limited: { label: "Limited", className: "bg-[#f5c400] text-[#212529]" },
+    limited: { label: "Limited", className: "bg-[#99d7dc] text-[#212529]" },
     express: { label: "Express", className: "bg-[#dd1f29] text-white" },
     weekendLocal: {
       label: "Weekend Local",

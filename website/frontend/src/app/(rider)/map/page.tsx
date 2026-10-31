@@ -41,8 +41,8 @@ export default function MapPage({ searchParams }: PageProps<"/map">) {
         <LiveMapSection searchParams={searchParams} />
       </Suspense>
       <p className="text-lg">
-        Trains are shown in gray, yellow and red by service type, with a red
-        arrow showing their direction of travel. Select a train to see its
+        Trains are shown in gray, blue, yellow and red by service type, with a
+        red arrow showing their direction of travel. Select a train to see its
         upcoming stops. Use the +/− buttons to zoom.
       </p>
     </div>

@@ -49,16 +49,21 @@ async function RealTimeAlerts() {
       </p>
     );
   }
-  const delays = timetable.trains
-    .map(delayMessage)
-    .filter((message) => message !== null);
+  // The timetable only carries active alerts, so canceled ones stay off here.
+  const messages = [
+    ...timetable.trains.map(delayMessage).filter((message) => message !== null),
+    ...timetable.alerts.map(
+      (alert) =>
+        `${alert.train_name ? `Train ${alert.train_name}` : "All trains"}: ${alert.message}`,
+    ),
+  ];
   // Alerts come newest first; the banner only has room for one.
   const [latest] = timetable.alerts;
 
   return (
     <>
       <div className="mx-auto flex w-full max-w-[1160px] flex-col gap-6 px-4 py-4">
-        <DelayTicker messages={delays} />
+        <DelayTicker messages={messages} />
         <InfoBox>
           <i>
             <b>Tip:</b> Check the Service Alerts for live issues. For planned
