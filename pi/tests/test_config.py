@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from caltreat.config import Config, defaults, diff, parse, validate
+from caltreat.config import Config, board_defaults, defaults, diff, parse, validate
 
 
 def test_defaults_are_valid():
@@ -17,7 +17,8 @@ def test_round_trip(tmp_path):
     cfg.data["mix"]["horn"] = 90
     cfg.data["speakers"]["a_int"] = {"device": "usb:1.3", "ch": "right", "level": 70}
     cfg.data["functions"].append({"id": "smoke", "name": "Smoke", "kind": "manual", "symbol": "●"})
-    cfg.data["relay"][3] = {"fn": "smoke", "alt": False}
+    cfg.data["boards"]["AB12"] = board_defaults("A")
+    cfg.data["boards"]["AB12"]["outputs"][7] = {"fn": "smoke", "alt": False}
     cfg.save()
     assert [p.name for p in tmp_path.iterdir()] == ["config.json"]  # atomic write leaves no temp file
 
@@ -37,7 +38,7 @@ def test_partial_and_old_files_get_defaults():
     new, errs = parse(json.dumps({"version": 1, "mix": {"bell": 50}}))
     assert errs == []
     assert new["mix"]["bell"] == 50 and new["mix"]["horn"] == 100
-    assert new["version"] == 2 and new["speakers"]["a_ext"] == {"device": "usb#1", "ch": "left", "level": 100}
+    assert new["version"] == 3 and new["speakers"]["a_ext"] == {"device": "usb#1", "ch": "left", "level": 100}
     assert {f["id"] for f in new["functions"]} >= {"a_head", "b_markers", "a_ditch_l", "doors"}
 
 
@@ -53,6 +54,10 @@ def test_partial_and_old_files_get_defaults():
     ({"version": 1, "speakers": {"rear": {"device": "jack", "ch": "middle"}}}, "speakers.rear.ch"),
     ({"version": 1, "relay": [{"fn": "head"}]}, "relay"),
     ({"version": 1, "relay": [{"fn": "laser"}, {}, {}, {}]}, "unknown function"),
+    ({"version": 3, "relay": [{}, {}, {}, {}]}, "no relay shield"),
+    ({"version": 3, "estop": {"level": 120}}, "estop"),
+    ({"version": 3, "estop": {"loud_s": 2.5}}, "estop"),
+    ({"version": 3, "functions": [{"id": "x", "name": "X", "kind": "stack", "color": "pink"}]}, "stack light"),
     ({"version": 1, "functions": [{"id": "Bad Id!", "name": "x"}]}, "functions[0].id"),
     ({"version": 1, "functions": [{"id": "a", "name": "A"}, {"id": "a", "name": "B"}]}, "used twice"),
     ({"version": 1, "functions": [{"id": "a", "name": "A", "kind": "laser"}]}, "kind"),
@@ -99,11 +104,11 @@ def test_diff_lists_changes():
     a, b = defaults(), defaults()
     b["mix"]["horn"] = 80
     b["speakers"]["b_ext"]["device"] = "usb:1.3"
-    b["relay"][0]["fn"] = None
+    b["estop"]["level"] = 50
     d = diff(a, b)
     assert "mix.horn: 100 -> 80" in d
     assert 'speakers.b_ext.device: "usb#2" -> "usb:1.3"' in d
-    assert 'relay[0].fn: "a_head" -> null' in d
+    assert "estop.level: 60 -> 50" in d
     assert diff(a, a) == []
 
 
@@ -116,7 +121,7 @@ def test_listeners_run_on_save(tmp_path):
     assert seen == [10]
 
 
-@pytest.mark.parametrize("text", ['{"version": 3, "mix": {"horn": 33}}', '{"version": 1, "mix": {"horn": 999}}', "{oops"])
+@pytest.mark.parametrize("text", ['{"version": 4, "mix": {"horn": 33}}', '{"version": 1, "mix": {"horn": 999}}', "{oops"])
 def test_unusable_file_is_kept_before_defaults_overwrite_it(tmp_path, text):
     (tmp_path / "config.json").write_text(text)
     cfg = Config.load(tmp_path)

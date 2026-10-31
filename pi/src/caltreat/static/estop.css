@@ -1,0 +1,41 @@
+/* EMERGENCY STOP button + banner, and the stack lights in the cab display (static/estop.js, safety.py) */
+.estop { position: relative; overflow: hidden; min-height: 64px; border-radius: 14px; border: 3px solid #ffd400;
+  background: repeating-linear-gradient(-45deg, #2a2400 0 10px, #14171b 10px 20px); display: flex; align-items: center;
+  justify-content: center; gap: 14px; padding: 6px; touch-action: none; }
+.estop b { position: relative; z-index: 1; font: 700 30px/1 var(--display); letter-spacing: .14em; color: #fff; padding: 10px 26px;
+  border-radius: 999px; background: radial-gradient(120% 140% at 50% 0%, #ff4a3d, var(--red) 45%, var(--red-deep));
+  box-shadow: 0 4px 0 #5c0b07, 0 0 18px rgba(225,37,27,.45); }
+.estop span { position: relative; z-index: 1; font: 600 12px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: #ffd400; }
+.estop .fill { position: absolute; inset: 0 auto 0 0; width: 0; background: rgba(225,37,27,.55); }
+.estop.arming .fill { width: 100%; transition: width var(--hold, 300ms) linear; }
+.estop.arming b { transform: translateY(3px); box-shadow: 0 1px 0 #5c0b07, 0 0 30px rgba(225,37,27,.8); }
+.estop.latched { border-color: var(--red); background: #3a1210; }
+.estop.latched b { animation: esblink .5s steps(1) infinite; }
+.estop.latched .fill { background: rgba(47,208,122,.35); }
+
+.esban { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; background: var(--red); color: #fff; animation: esban 1s steps(1) infinite; }
+.esban[hidden], .esban.hidden { display: none !important; }
+.esban b { font: 700 28px/1 var(--display); letter-spacing: .14em; }
+.esban span { font: 600 18px/1 var(--mono); opacity: .9; }
+.esban button, .esban .sbtn { min-width: 56px; height: 44px; border-radius: 10px; border: 2px solid #fff; background: rgba(0,0,0,.25);
+  color: #fff; font: 700 24px/1 var(--mono); }
+@keyframes esban { 50% { background: var(--red-deep); } }
+@keyframes esblink { 50% { opacity: .35; } }
+
+/* locked while the E-STOP is latched */
+.sq.locked, .seqbar .auto.locked, .pad.door.locked, #throttle:disabled { opacity: .35; filter: grayscale(1); pointer-events: none; }
+
+/* the stack light, top to bottom blue, red, yellow, green (as mounted) */
+.lcd { grid-template-columns: 1fr 1fr auto auto; }
+.lcd .stack { grid-row: 1 / span 2; grid-column: 4; display: flex; flex-direction: column; gap: 4px; padding: 4px 5px;
+  border-radius: 7px; background: #050806; box-shadow: inset 0 0 0 1px #2a342d; align-self: center; }
+.lcd .stack i { width: 14px; height: 12px; border-radius: 3px; background: #1d241f; }
+.lcd .stack[data-s=green] .g { background: var(--green); box-shadow: 0 0 10px var(--green); }
+.lcd .stack[data-s=yellow] .y { background: #ffd400; box-shadow: 0 0 10px #ffd400; }
+.lcd .stack[data-s=red] .r { background: var(--red); box-shadow: 0 0 10px var(--red); }
+.lcd .stack[data-s=estop] .r { background: var(--red); box-shadow: 0 0 12px var(--red); animation: esblink .5s steps(1) infinite; }
+.lcd .stack[data-blue=on] .b { background: #3b82f6; box-shadow: 0 0 10px #3b82f6; }
+.lcd .stack[data-blue=flash] .b { background: #3b82f6; animation: esblink 1s steps(1) infinite; }
+.lt.blue.on i, .lt.blue.flash i { color: #60a5fa; text-shadow: 0 0 10px #3b82f6; }
+@media (prefers-reduced-motion: reduce) { .esban { animation: none; } }

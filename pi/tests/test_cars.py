@@ -32,7 +32,7 @@ def test_standstill():
 
 def test_migrate_v1_configs():
     old_default = parse(json.dumps({"version": 1}))[0]
-    assert old_default["speakers"] == cars.default_speakers() and old_default["relay"] == cars.DEFAULT_RELAY
+    assert old_default["speakers"] == cars.default_speakers() and "relay" not in old_default
     custom = {"version": 1, "speakers": {"front": {"device": "usb:1.2", "ch": "left"}, "inside": {"device": "usb:1.3"},
                                          "rear": {"device": "usb:1.2", "ch": "right", "level": 60}},
               "relay": [{"fn": "head"}, {"fn": None}, {"fn": "markers"}, {"fn": "markers", "alt": True}],
@@ -44,14 +44,15 @@ def test_migrate_v1_configs():
                                "a_int": {"device": "usb:1.3", "ch": "both", "level": 100},
                                "b_ext": {"device": "usb:1.2", "ch": "right", "level": 60},
                                "b_int": {"device": "none", "ch": "both", "level": 100}}
-    assert new["relay"][0]["fn"] == "head" and {"head", "markers", "a_head"} <= {f["id"] for f in new["functions"]}
-    assert new["version"] == 2 and new["direction"] == "A"
+    assert "relay" not in new and {"head", "markers", "a_head"} <= {f["id"] for f in new["functions"]}
+    assert new["version"] == 3 and new["direction"] == "A"
 
 
 def test_board_defaults_follow_the_board_name(tmp_path):
     from caltreat.config import board_defaults
-    assert [o["fn"] for o in board_defaults("B")["outputs"][:5]] == ["b_ditch_l", "b_ditch_r", "b_head", "b_markers",
-                                                                     None]
+    assert [o["fn"] for o in board_defaults("B")["outputs"]] == ["b_ditch_l", "b_ditch_r", "b_head", "b_markers",
+                                                                 "stack_green", "stack_yellow", "stack_red",
+                                                                 "stack_blue"]
     assert all(o["fn"] is None for o in board_defaults("C")["outputs"])
 
 
@@ -167,27 +168,25 @@ def fake_io(direction, mph=0.0, horn=False, crossing=False):
     cfg.data.update(direction=direction)
     cfg.data["boards"] = {"AA01": {"name": "A", "outputs": cars.default_board_outputs("A", 8)},
                           "BB02": {"name": "B", "outputs": cars.default_board_outputs("B", 8)}}
-    audio = SimpleNamespace(horn_on=horn, motor=SimpleNamespace(speed=mph / 79), doors="closed",
+    audio = SimpleNamespace(horn_on=horn, motor=SimpleNamespace(speed=mph / 79, throttle=0.0), doors="closed",
                             busy_pattern="crossing" if crossing else None, bell=SimpleNamespace(on=False))
     finder = SimpleNamespace(found=[SimpleNamespace(uid="AA01"), SimpleNamespace(uid="BB02")])
     return m.Io(audio, cfg, finder, lambda: {})
 
 
 def outputs(io, now):
-    relay, boards = io.desired(now)
-    a, b = boards["AA01"][:4], boards["BB02"][:4]  # ditch L, ditch R, headlight, markers
-    return relay, a, b
+    boards = io.desired(now)
+    return boards["AA01"][:4], boards["BB02"][:4]  # ditch L, ditch R, headlight, markers
 
 
 def ditch_seen(io, t0, secs=2.0):
-    return {tuple(outputs(io, t0 + t / 10)[1][:2]) for t in range(int(secs * 10))}
+    return {tuple(outputs(io, t0 + t / 10)[0][:2]) for t in range(int(secs * 10))}
 
 
 @pytest.mark.parametrize("mph", [0, 30])
 def test_a_leading_steady_moving_or_not(mph):
     io = fake_io("A", mph=mph)
-    relay, a, b = outputs(io, 100.0)
-    assert relay == [True, False, False, True]  # R1 A head, R2 B head, R3 A markers, R4 B markers
+    a, b = outputs(io, 100.0)
     assert a == [True, True, True, False] and b == [False, False, False, True]
     assert ditch_seen(io, 100.0) == {(True, True)}  # steady: no wig-wag just for moving
 
@@ -196,7 +195,7 @@ def test_ditch_lights_flash_with_the_horn_then_hold():
     io = fake_io("A", mph=30, horn=True)
     assert ditch_seen(io, 100.0) == {(True, False), (False, True)}  # alternate, never both
     # 60 / min each: L on for 0.5 s, then R
-    assert outputs(io, 100.0)[1][:2] == [True, False] and outputs(io, 100.5)[1][:2] == [False, True]
+    assert outputs(io, 100.0)[0][:2] == [True, False] and outputs(io, 100.5)[0][:2] == [False, True]
     io.audio.horn_on = False  # horn released at t = 101.9 (last seen): keeps flashing for hold_s = 15 s
     assert ditch_seen(io, 110.0) == {(True, False), (False, True)}
     assert ditch_seen(io, 118.0) == {(True, True)}
@@ -211,15 +210,15 @@ def test_ditch_lights_flash_through_a_crossing():
 
 def test_b_leading_and_master_off():
     io = fake_io("B", mph=20, horn=True)
-    relay, a, b = outputs(io, 100.0)
-    assert relay == [False, True, True, False] and a == [False, False, False, True] and b[2:] == [True, False]
+    a, b = outputs(io, 100.0)
+    assert a == [False, False, False, True] and b[2:] == [True, False]
     assert ditch_seen(io, 100.0) == {(False, False)}  # the trailing car's ditch lights stay off
     io.cfg.data["lights_on"] = False
-    relay, a, b = outputs(io, 100.0)
-    assert not any(relay) and not any(a) and not any(b)
+    a, b = outputs(io, 100.0)
+    assert not any(a) and not any(b)
 
 
 def test_flash_rate_setting():
     io = fake_io("A", horn=True)
     io.cfg.data["ditch"]["rate"] = 120  # 120 / min: 0.25 s halves
-    assert outputs(io, 100.0)[1][:2] == [True, False] and outputs(io, 100.25)[1][:2] == [False, True]
+    assert outputs(io, 100.0)[0][:2] == [True, False] and outputs(io, 100.25)[0][:2] == [False, True]
