@@ -130,6 +130,25 @@ cd ~/caltreat
 poetry run python -m caltreat
 ```
 
+### Stutters, frozen pages, lost Wi-Fi: `tools/diagnose.sh`
+
+Run it on the Pi while the problem happens (keep playing sounds and using the
+pages for the few minutes it runs). No sudo needed. It writes one file to send
+back, with a summary of what looks wrong at the top (undervoltage, throttling,
+CPU per process and thread, sound buffers running dry, a slow app, Wi-Fi drops,
+access point restarts, signal, ping loss) and the logs behind it:
+
+```sh
+bash ~/caltreat/tools/diagnose.sh        # 3 minutes; or: ... diagnose.sh 300
+```
+
+Not deployed yet? From your computer, on the same network:
+
+```sh
+scp pi/tools/diagnose.sh caltreat@caltreat.local: && ssh -t caltreat@caltreat.local bash diagnose.sh
+scp 'caltreat@caltreat.local:caltreat-diag-*.tar.gz' .
+```
+
 ## Intercom and HTTPS
 
 Phones only let a web page use the microphone on a secure (https) page, so
