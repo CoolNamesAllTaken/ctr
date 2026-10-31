@@ -1,4 +1,11 @@
-# Name,   Type, SubType, Offset,  Size, Flags
-nvs,      data, nvs,     ,        0x6000,
-phy_init, data, phy,     ,        0x1000,
-factory,  app,  factory, ,        0x600000,
+# Name,   Type, SubType, Offset,   Size, Flags
+# Two app slots for network OTA (net_ota). Changing from the old single-factory
+# table needs one serial erase_flash + upload, see docs/ota.md.
+# Offsets are explicit: PlatformIO computes the upload address of firmware.bin
+# from this file itself, starting at 0 instead of after the partition table, so
+# with blank offsets it would flash the app to 0x10000 instead of ota_0.
+nvs,      data, nvs,     0x9000,   0x6000,
+otadata,  data, ota,     0xf000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+ota_0,    app,  ota_0,   0x20000,  0x600000,
+ota_1,    app,  ota_1,   0x620000, 0x600000,

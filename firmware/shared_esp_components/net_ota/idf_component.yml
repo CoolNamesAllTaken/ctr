@@ -1,0 +1,8 @@
+version: "0.1.0"
+description: "net_ota: push firmware updates over HTTP (POST /ota) with rollback guard and mDNS advertisement"
+targets:
+  - esp32s3
+  - esp32p4
+dependencies:
+  idf: ">=5.4,<6.0"
+  espressif/mdns: "^1.14.1"

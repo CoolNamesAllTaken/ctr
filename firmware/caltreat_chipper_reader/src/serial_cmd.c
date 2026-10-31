@@ -5,13 +5,16 @@
  *   tap              tap the virtual card
  *   ok | low | tagoff | insufficient | error    force a result
  *   balance <cents>  set the virtual card balance
- *   card <balance_cents> [discount] [on]  present an external card (NFC path);
- *                    "on" = card already tagged on
+ *   card             print the ride block of the next Chipper card tapped (no ride taken)
+ *   card <balance_cents> [discount] [on]  present a debug card charged like the
+ *                    virtual card; "on" = card already tagged on
  *   time <unix_seconds>                set the on-screen clock (e.g. `time $(date +%s)`)
  *   snap [top|fb]    dump a screenshot (decode with tools/snap.py); "top" = overlay
  *                    layer, "fb" = the frame buffer actually on the panel (landscape)
  *   sheet            open/close the debug sheet
- *   cards            list the card accounts (UID, balance, trip state)
+ *   reports          tap reports to the backend: queued, sent, dropped, last error
+ *   net              network status (adapter, IP, backend, hostname)
+ *   ota              running firmware version, partition and update state
  */
 #include "serial_cmd.h"
 
@@ -22,14 +25,21 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/uart.h"
+#include "esp_app_desc.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "esp_ota_ops.h"
+#include "esp_timer.h"
 #include "mbedtls/base64.h"
 
 #include "clock.h"
 #include "board.h"
+#include "net.h"
+#include "net_ota.h"
+#include "nfc.h"
 #include "reader.h"
+#include "tap_report.h"
 #include "ui.h"
 
 static const char *TAG = "cmd";
@@ -112,6 +122,38 @@ static void dump_rgb565(const uint8_t *data, uint32_t w, uint32_t h, uint32_t st
     out("SNAP-END\n");
 }
 
+static void print_net(void)
+{
+    net_status_t st;
+    net_get_status(&st);
+    ESP_LOGI(TAG, "nic %s  ip " IPSTR "  reinits %lu", net_nic_state_name(st.nic), IP2STR(&st.ip),
+             (unsigned long)st.nic_reinits);
+    if (st.backend_last_ok_us) {
+        ESP_LOGI(TAG, "backend %s  last ok %lld s ago", net_backend_state_name(st.backend),
+                 (esp_timer_get_time() - st.backend_last_ok_us) / 1000000);
+    } else {
+        ESP_LOGI(TAG, "backend %s  never reached", net_backend_state_name(st.backend));
+    }
+    ESP_LOGI(TAG, "host %s.local  id %s  backend url %s", net_hostname(), net_device_id(), CONFIG_CHIPPER_BACKEND_URL);
+}
+
+static void print_ota(void)
+{
+    const esp_app_desc_t *d = esp_app_get_description();
+    const esp_partition_t *part = esp_ota_get_running_partition();
+    esp_ota_img_states_t st;
+    const char *state = "none";
+    if (esp_ota_get_state_partition(part, &st) == ESP_OK) {
+        state = st == ESP_OTA_IMG_VALID            ? "valid"
+                : st == ESP_OTA_IMG_PENDING_VERIFY ? "pending_verify"
+                : st == ESP_OTA_IMG_NEW            ? "new"
+                                                   : "other";
+    }
+    ESP_LOGI(TAG, "%s %s (IDF %s, built %s %s)", d->project_name, d->version, d->idf_ver, d->date, d->time);
+    ESP_LOGI(TAG, "running %s @0x%lx, state %s%s", part->label, (unsigned long)part->address, state,
+             net_ota_busy() ? ", update in progress" : "");
+}
+
 static void run(char *line)
 {
     char *cmd = strtok(line, " \t");
@@ -142,28 +184,29 @@ static void run(char *line)
             card.tagged_on |= !strcmp(opt, "on");
         }
         reader_present_card(&card);
+    } else if (!strcmp(cmd, "card")) {
+        nfc_inspect_next();
     } else if (!strcmp(cmd, "snap")) {
         dump_screenshot(arg);
-    } else if (!strcmp(cmd, "cards")) {
-        reader_account_t acc[MAX_ACCOUNTS];
-        int n = reader_accounts(acc, MAX_ACCOUNTS);
-        for (int i = 0; i < n; i++) {
-            char hex[31] = "";
-            for (int j = 0; j < acc[i].uid_len; j++) {
-                sprintf(hex + (j ? 3 * j - 1 : 0), j ? ":%02X" : "%02X", acc[i].uid[j]);
-            }
-            ESP_LOGI(TAG, "card %s  balance %ld.%02ld  %s", hex, (long)(acc[i].balance_cents / 100),
-                     (long)(acc[i].balance_cents % 100), acc[i].tagged_on ? "tagged on" : "");
-        }
-        if (n == 0) {
-            ESP_LOGI(TAG, "no cards seen yet");
+    } else if (!strcmp(cmd, "reports")) {
+        tap_report_stats_t st;
+        tap_report_stats(&st);
+        ESP_LOGI(TAG, "reports: %lu queued, %lu sent, %lu dropped (queue full), %lu refused, last HTTP %d",
+                 (unsigned long)st.queued, (unsigned long)st.sent, (unsigned long)st.dropped_full,
+                 (unsigned long)st.dropped_rejected, st.last_status);
+        if (st.last_detail[0]) {
+            ESP_LOGI(TAG, "last refusal: %s", st.last_detail);
         }
     } else if (!strcmp(cmd, "sheet")) {
         ui_toggle_debug();
     } else if (!strcmp(cmd, "time") && arg) {
         clock_set((time_t)atoll(arg));
+    } else if (!strcmp(cmd, "net")) {
+        print_net();
+    } else if (!strcmp(cmd, "ota")) {
+        print_ota();
     } else {
-        ESP_LOGW(TAG, "unknown command '%s' (tap|ok|low|tagoff|insufficient|error|balance N|card N [discount] [on]|time T|snap [top|fb]|sheet|cards)", cmd);
+        ESP_LOGW(TAG, "unknown command '%s' (tap|ok|low|tagoff|insufficient|error|balance N|card|card N [discount] [on]|time T|snap [top|fb]|sheet|reports|net|ota)", cmd);
     }
 }
 

@@ -1,0 +1,80 @@
+menu "USB Ethernet (usb_eth)"
+
+    # esp_eth only builds its core (esp_eth.c, 802.3 PHY base, netif glue) when
+    # an Ethernet controller selects ETH_ENABLED; the ESP32-S3 has no EMAC.
+    # In IDF 5.4 esp_eth_driver.h also only gets esp_eth_mac.h through the
+    # EMAC / SPI / OpenETH headers, so with none of them enabled esp_eth itself
+    # fails to compile. Enabling the SPI Ethernet umbrella option (no chip
+    # drivers selected, so no extra code) works around that.
+    config USB_ETH_ESP_ETH
+        bool
+        default y
+        select ETH_ENABLED
+        select ETH_USE_SPI_ETHERNET if !ETH_USE_ESP32_EMAC && !ETH_USE_OPENETH
+
+    config USB_ETH_ATTACH_TIMEOUT_MS
+        int "Wait for an adapter during esp_eth_driver_install (ms)"
+        default 3000
+        range 0 600000
+        help
+            esp_eth_driver_install() waits up to this long for the first supported adapter so
+            that its own MAC address can be used. If none shows up, the driver continues with
+            the ESP's Ethernet MAC address and binds to an adapter when it is plugged in later.
+
+    config USB_ETH_RX_XFER_SIZE
+        int "Bulk-IN transfer size (bytes, 0 = driver default)"
+        default 0
+        range 0 65536
+        help
+            0 lets the driver pick the size for the chip and the USB speed (see the driver's
+            options below). Otherwise this size is requested for every adapter; the driver
+            rounds it to what the endpoint (64-byte packets at full speed on the ESP32-S3,
+            512 at high speed on the ESP32-P4) and its wire format need.
+
+    config USB_ETH_RX_XFER_COUNT
+        int "Bulk-IN transfers in flight"
+        default 4 if IDF_TARGET_ESP32P4
+        default 3
+        range 1 16
+
+    config USB_ETH_TX_XFER_COUNT
+        int "Bulk-OUT transfers (TX queue depth)"
+        default 8 if IDF_TARGET_ESP32P4
+        default 4
+        range 1 16
+
+    config USB_ETH_TX_TIMEOUT_MS
+        int "Wait for a free TX transfer (ms)"
+        default 50
+        range 0 10000
+
+    config USB_ETH_CTRL_TIMEOUT_MS
+        int "Register access (control transfer) timeout (ms)"
+        default 1000
+        range 10 10000
+
+    config USB_ETH_ACCEPT_ALL_MULTICAST
+        bool "Accept all multicast frames"
+        default y
+        help
+            ESP-IDF 5.4's esp_eth has no multicast filter API, so by default every multicast
+            frame is accepted (IPv6 neighbour discovery, mDNS and IGMP groups then work without
+            extra code). Disable to only accept groups added with USB_ETH_CMD_ADD_MCAST; on
+            ESP-IDF >= 5.5 the groups lwIP joins (IGMP/MLD) are also added automatically
+            (ETH_CMD_ADD_MAC_FILTER), up to 16 in total.
+
+    config USB_ETH_WORKER_TASK_STACK_SIZE
+        int "Attach/detach worker task stack size"
+        default 4096
+        range 2048 16384
+
+    config USB_ETH_WORKER_TASK_PRIO
+        int "Attach/detach worker task priority"
+        default 5
+        range 1 24
+
+    menu "Drivers"
+        rsource "drivers/rtl815x/Kconfig"
+    endmenu
+
+endmenu

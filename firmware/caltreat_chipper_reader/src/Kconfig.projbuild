@@ -1,0 +1,26 @@
+menu "Chipper reader network"
+
+    config CHIPPER_BACKEND_URL
+        string "Backend base URL (no trailing slash)"
+        default "https://ctr-api-487080838958.us-west1.run.app"
+
+    config CHIPPER_BACKEND_PROBE_S
+        int "Seconds between backend health checks while reachable"
+        default 30
+        range 5 3600
+
+    config CHIPPER_NET_REINIT_S
+        int "Reinstall the Ethernet driver after this many seconds without an address"
+        default 300
+        range 30 86400
+
+    config CHIPPER_SAME_READER_IGNORE_MIN
+        int "Ignore a tap off at the reader the card tapped on at, for this many minutes"
+        default 30
+        range 0 1440
+        help
+            A second tap at the gate a rider just tapped on at is shown as
+            "already tapped on" instead of closing the trip. After this
+            window it counts as a normal tap off.
+
+endmenu

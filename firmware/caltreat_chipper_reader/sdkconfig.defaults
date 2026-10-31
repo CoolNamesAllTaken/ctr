@@ -42,3 +42,12 @@ CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
 CONFIG_LV_USE_PERF_MONITOR=n
 # screenshots over serial (serial_cmd "snap")
 CONFIG_LV_USE_SNAPSHOT=y
+
+# ---- Network OTA (net_ota) ----
+# A new image boots as PENDING_VERIFY and rolls back unless it confirms itself
+# (net_ota_mark_valid, once it has an IP).
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# httpd (OTA) + backend HTTPS client + DNS + mDNS
+CONFIG_LWIP_MAX_SOCKETS=16
+# Cloud Run backend over HTTPS
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y

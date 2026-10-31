@@ -1,0 +1,59 @@
+dependencies:
+  ESP32-HUB75-MatrixPanel-I2S-DMA:
+    component_hash: 5ea4f242003b0272238f54940f540813d0a6313e973bf52d5822fdd6c3741e4e
+    dependencies:
+    - name: idf
+      require: public
+      version: '>=5.4,<6.0'
+    source:
+      git: https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA.git
+      path: .
+      type: git
+    version: 90620a19adefa797485f2360e86a2562cb8aa30f
+  espressif/mdns:
+    component_hash: ef0766474b37459f6ad22461e453a8713e780e831a7c993b16919d817988dff6
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.14.1
+  idf:
+    source:
+      type: idf
+    version: 5.5.5
+  net_ota:
+    dependencies:
+    - name: idf
+      version: '>=5.4,<6.0'
+    - name: espressif/mdns
+      version: ^1.14.1
+    source:
+      path: /Users/nano/Documents/git_checkouts/ctr/firmware/shared_esp_components/net_ota
+      type: local
+    targets:
+    - esp32s3
+    - esp32p4
+    version: 0.1.0
+  usb_eth:
+    dependencies:
+    - name: idf
+      version: '>=5.4,<6.0'
+    source:
+      path: /Users/nano/Documents/git_checkouts/ctr/firmware/shared_esp_components/usb_eth
+      type: local
+    targets:
+    - esp32s3
+    - esp32p4
+    version: 0.2.0
+direct_dependencies:
+- ESP32-HUB75-MatrixPanel-I2S-DMA
+- espressif/mdns
+- idf
+- net_ota
+- usb_eth
+manifest_hash: cfc42f35502a3729e48ff0182406fa2515db9d56033a0ef2c11185fa6251d1a5
+target: esp32s3
+version: 2.0.0

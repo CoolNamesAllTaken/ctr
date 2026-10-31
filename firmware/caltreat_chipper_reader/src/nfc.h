@@ -12,3 +12,6 @@
 
 /* Start polling the RC522; each new card in the field becomes one tap. */
 esp_err_t nfc_init(void);
+
+/* Print the ride block of the next card tapped instead of taking a ride. */
+void nfc_inspect_next(void);

@@ -1,7 +1,8 @@
 /*
- * Minimal MFRC522 (RFID-RC522 module) driver over SPI: enough to read the UID
- * of an ISO 14443A card (MIFARE Classic / Ultralight / DESFire, phones in
- * card emulation, ...). Read-only: no authentication, no block access.
+ * Minimal MFRC522 (RFID-RC522 module) driver over SPI: reads the UID of an
+ * ISO 14443A card (MIFARE Classic / Ultralight / DESFire, phones in card
+ * emulation, ...), plus MIFARE Classic key A authentication and 16-byte block
+ * read/write.
  */
 #pragma once
 
@@ -38,3 +39,17 @@ esp_err_t rc522_init(const rc522_config_t *cfg);
 /* Look for a card (including one already halted) and read its UID, then halt
  * it. One call is one complete attempt; poll it. */
 rc522_status_t rc522_read_card(rc522_card_t *card);
+
+/* Like rc522_read_card() but leaves the card selected for block access.
+ * Finish with rc522_halt(). */
+rc522_status_t rc522_select(rc522_card_t *card);
+
+/* Halt the selected card and switch the crypto engine off. */
+void rc522_halt(void);
+
+/* MIFARE Classic, on a selected card. RC522_NO_CARD = no answer (card gone or,
+ * for auth, wrong key: the card stays silent). */
+rc522_status_t rc522_mfc_auth_a(uint8_t block, const uint8_t key[6], const rc522_card_t *card);
+rc522_status_t rc522_mfc_read(uint8_t block, uint8_t out16[16]);
+rc522_status_t rc522_mfc_write(uint8_t block, const uint8_t in16[16]);
+void rc522_mfc_stop_crypto(void);

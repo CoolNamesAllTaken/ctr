@@ -1,11 +1,12 @@
 /*
  * NFC front-end: polls the RC522 and turns "a card arrived in the field" into
- * one reader tap. Read-only: only the card's UID is used, like the
- * account-based next-generation Clipper, where the card is just an identifier
- * and balance/trip state live in the back office (here: reader.c).
+ * one tap. The card holds its rides (card.c), so the whole exchange (take a
+ * ride, write it back) runs here while the card is selected; the reader task
+ * only shows the result.
  */
 #include "nfc.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -15,6 +16,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "card.h"
 #include "rc522.h"
 #include "reader.h"
 
@@ -23,6 +25,31 @@ static const char *TAG = "nfc";
 #define POLL_MS        50
 #define GONE_MS        600   /* card counts as removed after this long unseen */
 
+static atomic_bool s_inspect_next;
+
+/* serial "card": print the ride block of the next card instead of tapping */
+static void inspect(const rc522_card_t *card)
+{
+    uint8_t half = 0, version = 0, raw[16] = {0};
+    card_status_t st = card_read(card, &half, &version, raw);
+    char hex[33];
+    for (int i = 0; i < 16; i++) {
+        sprintf(hex + 2 * i, "%02x", raw[i]);
+    }
+    if (st == CARD_VALID) {
+        ESP_LOGI(TAG, "Chipper card v%u: %u%s ride(s)%s; block 4 %s", version, half / 2, (half & 1) ? ".5" : "",
+                 (half & 1) ? ", tapped on" : "", hex);
+    } else {
+        ESP_LOGI(TAG, "%s; block 4 %s", card_status_name(st), hex);
+    }
+}
+
+void nfc_inspect_next(void)
+{
+    atomic_store(&s_inspect_next, true);
+    ESP_LOGI(TAG, "tap a card to inspect it");
+}
+
 static void nfc_task(void *arg)
 {
     rc522_card_t last = {0};
@@ -30,7 +57,7 @@ static void nfc_task(void *arg)
 
     while (true) {
         rc522_card_t card;
-        rc522_status_t st = rc522_read_card(&card);
+        rc522_status_t st = rc522_select(&card);
         int64_t now = esp_timer_get_time();
 
         if (st == RC522_OK) {
@@ -45,10 +72,18 @@ static void nfc_task(void *arg)
                 }
                 ESP_LOGI(TAG, "card %s (ATQA %04X SAK %02X)", hex, card.atqa, card.sak);
 
-                reader_card_t rc = {.uid_len = card.uid_len};
-                memcpy(rc.uid, card.uid, card.uid_len);
-                reader_present_card(&rc);
+                if (atomic_exchange(&s_inspect_next, false)) {
+                    inspect(&card);
+                } else {
+                    uint8_t half = 0;
+                    card_status_t cs = card_tap(&card, &half);
+                    ESP_LOGI(TAG, "%s, %u half ride(s) left", card_status_name(cs), half);
+                    /* No automatic retry on an RF error: the write may have landed, and
+                     * a re-read while the card is still held would show "no rides". */
+                    reader_card_result(&card, cs, half);
+                }
             }
+            rc522_halt();
         } else if (st == RC522_COLLISION) {
             ESP_LOGW(TAG, "more than one card in the field");
         }

@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "esp_err.h"
+#include "card.h"
 
 typedef enum {
     READER_RESULT_OK,           /* tag on / fare paid: one beep */
@@ -16,6 +17,8 @@ typedef enum {
     READER_RESULT_TAG_OFF,      /* Caltrain tag off: rising two-tone */
     READER_RESULT_INSUFFICIENT, /* not enough value: three beeps */
     READER_RESULT_CARD_ERROR,   /* unreadable, tap again: warning tone */
+    READER_RESULT_ALREADY_TAPPED, /* ride used at this reader already: neutral, one beep */
+    READER_RESULT_NOT_CHIPPER,  /* not a Chipper card: warning tone */
 } reader_result_kind_t;
 
 typedef struct {
@@ -26,38 +29,23 @@ typedef struct {
     bool tagged_on;             /* card's trip state after the tap */
     uint8_t uid[10];            /* physical card that was tapped (uid_len 0 = virtual/forced) */
     uint8_t uid_len;
+    int16_t rides_left;         /* Chipper card whole rides after the tap; -1 = virtual/forced (money screens) */
 } reader_result_t;
 
-/*
- * A card presented to the reader. With a UID (uid_len > 0) the card is just an
- * identifier, as with the account-based next-generation Clipper: its balance
- * and trip state come from the reader's account table (a new UID is enrolled
- * with ACCOUNT_START_CENTS). Without a UID, the fields below are used as-is.
- */
+/* Debug: a card given by its fields (serial "card"), charged with the fare rules
+ * of the debug sheet like the virtual card. */
 typedef struct {
-    uint8_t uid[10];
-    uint8_t uid_len;
     int32_t balance_cents;
     bool discount;
     bool tagged_on;             /* card currently has an open Caltrain trip */
 } reader_card_t;
 
-#define ACCOUNT_START_CENTS 2000
-#define MAX_ACCOUNTS        16
-
-typedef struct {
-    uint8_t uid[10];
-    uint8_t uid_len;
-    int32_t balance_cents;
-    bool tagged_on;
-} reader_account_t;
-
-/* Snapshot of the account table; returns the number of accounts copied. */
-int reader_accounts(reader_account_t *out, int max);
-
 esp_err_t reader_init(void);
 
-/* Real path: a card was read. The result's balance is what should be written back. */
+/* Real path: a Chipper card was tapped and card_tap() returned `st`. */
+void reader_card_result(const rc522_card_t *card, card_status_t st, uint8_t half_rides_left);
+
+/* Debug: present a card given by its fields. */
 void reader_present_card(const reader_card_t *card);
 
 /* Debug: tap the built-in virtual card (balance editable from the debug panel). */
@@ -65,6 +53,9 @@ void reader_tap_virtual_card(void);
 
 /* Debug: show a given result without touching any balance. */
 void reader_force_result(reader_result_kind_t kind);
+
+/* No tap being processed and no result on screen (e.g. safe to start an update). */
+bool reader_is_idle(void);
 
 /* Virtual card balance. */
 int32_t reader_virtual_balance(void);

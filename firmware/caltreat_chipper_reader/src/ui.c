@@ -2,7 +2,8 @@
  * Chipper reader screen (portrait 480x800, modelled on the next-generation
  * Clipper validator as used on Caltrain) plus a slide-up debug sheet.
  *
- *   idle    navy (Caltrain): logo + wordmark, hand-with-card icon, "TAG HERE", clock
+ *   idle    navy (Caltrain): logo + wordmark, hand-with-card icon, "TAG HERE",
+ *           kiosk ID and clock bottom left
  *   result  logo-less full-screen card: bold two-line message at the top,
  *           outlined icon in the middle, lighter text below: "FARE $x.xx" and
  *           "BAL $x.xx" when accepted (navy), the reason when rejected (orange).
@@ -15,6 +16,7 @@
 #include "assets.h"
 #include "board.h"
 #include "clock.h"
+#include "net.h"
 #include "settings.h"
 
 /* Background colours (docs/screens.md). Caltrain theme: navy idle and
@@ -50,6 +52,9 @@ static lv_obj_t *s_glyph;
 static lv_obj_t *s_detail;
 static lv_obj_t *s_balance;
 
+/* firmware update in progress (covers both layers above) */
+static lv_obj_t *s_updating;
+
 /* debug sheet */
 static lv_obj_t *s_dbg_btn;
 static lv_obj_t *s_dbg_sheet;
@@ -84,6 +89,28 @@ static result_style_t result_style(const reader_result_t *r)
 {
     result_style_t st = {.headline = "TRAVEL\nOK", .icon = &img_icon_check, .bg = CLR_ACCEPT};
     char money[16];
+    if (r->rides_left >= 0) {   /* Chipper card: rides, not money */
+        switch (r->kind) {
+        case READER_RESULT_OK:
+            snprintf(st.detail, sizeof(st.detail), "TAGGED ON");
+            return st;
+        case READER_RESULT_TAG_OFF:
+            snprintf(st.detail, sizeof(st.detail), "TAGGED OFF");
+            snprintf(st.balance, sizeof(st.balance), "RIDES LEFT %d", r->rides_left);
+            return st;
+        case READER_RESULT_ALREADY_TAPPED:
+            snprintf(st.detail, sizeof(st.detail), "ALREADY\nTAPPED ON");
+            return st;
+        case READER_RESULT_INSUFFICIENT:
+            return (result_style_t){.bg = CLR_REJECT, .headline = "TRAVEL\nNOT OK", .icon = &img_icon_prohibited,
+                                    .detail = "NO RIDES\nLEFT"};
+        case READER_RESULT_NOT_CHIPPER:
+            return (result_style_t){.bg = CLR_REJECT, .headline = "TRAVEL\nNOT OK", .icon = &img_icon_prohibited,
+                                    .detail = "NOT A CHIPPER\nCARD"};
+        default:
+            break;   /* card error: as below */
+        }
+    }
     switch (r->kind) {
     case READER_RESULT_OK:
     case READER_RESULT_LOW_BALANCE:
@@ -175,6 +202,14 @@ static void create_idle_layer(lv_obj_t *scr)
     lv_label_set_text(tag, "TAG HERE");
     lv_obj_align(tag, LV_ALIGN_CENTER, 0, 200);
 
+    /* The reader's kiosk ID, as the backend lists it ("chipper-reader-<factory MAC>"),
+     * left-aligned above the clock. */
+    lv_obj_t *id = lv_label_create(s_idle);
+    lv_obj_set_style_text_font(id, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(id, CLR_WHITE, 0);
+    lv_label_set_text(id, net_hostname());
+    lv_obj_align(id, LV_ALIGN_BOTTOM_LEFT, 22, -52);
+
     s_clock = lv_label_create(s_idle);
     lv_obj_set_style_text_font(s_clock, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(s_clock, CLR_WHITE, 0);
@@ -218,6 +253,12 @@ static void create_reader_screen(void)
 
     create_idle_layer(scr);
     create_result_layer(scr);
+
+    s_updating = full_screen_layer(scr, CLR_SCREEN);
+    lv_obj_t *msg = centered_label(s_updating, s_font_detail);
+    lv_label_set_text(msg, "UPDATING\nFIRMWARE\n\nPLEASE WAIT");
+    lv_obj_center(msg);
+    lv_obj_add_flag(s_updating, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* Must hold the LVGL lock. */
@@ -562,15 +603,20 @@ void ui_show_result(const reader_result_t *result)
     render();
     slider_sync(SL_BALANCE);
     if (result->uid_len) {
-        char uid[31] = "", bal[16];
+        char uid[31] = "";
         for (int i = 0; i < result->uid_len; i++) {
             int at = i ? 3 * i - 1 : 0;   /* "AA:BB:..." */
             snprintf(uid + at, sizeof(uid) - at, i ? ":%02X" : "%02X", result->uid[i]);
         }
-        fmt_money(bal, sizeof(bal), result->balance_cents);
-        lv_label_set_text_fmt(s_last_card, "Last card: %s\n%s%s", uid, bal,
-                              result->tagged_on ? "  (tagged on)" : "");
+        lv_label_set_text_fmt(s_last_card, "Last card: %s\n%d ride(s) left", uid, result->rides_left);
     }
+    lvgl_port_unlock();
+}
+
+void ui_show_updating(bool active)
+{
+    lvgl_port_lock(0);
+    lv_obj_set_flag(s_updating, LV_OBJ_FLAG_HIDDEN, !active);
     lvgl_port_unlock();
 }
 

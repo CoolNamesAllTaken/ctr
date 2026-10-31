@@ -9,5 +9,8 @@ void ui_init(void);
 void ui_show_idle(void);
 void ui_show_result(const reader_result_t *result);
 
+/* Cover the screen with an "updating firmware" message, or remove it. */
+void ui_show_updating(bool active);
+
 /* Open/close the debug sheet (also reachable via the on-screen gear button). */
 void ui_toggle_debug(void);

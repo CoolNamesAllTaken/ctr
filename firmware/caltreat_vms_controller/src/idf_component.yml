@@ -1,0 +1,14 @@
+dependencies:
+  idf:
+    version: '>=5.5.0,<5.6'
+  # No upstream idf_component.yml, so it comes straight from git. Built without Adafruit GFX
+  # (CONFIG_ESP32_HUB75_USE_GFX=n in sdkconfig.defaults).
+  ESP32-HUB75-MatrixPanel-I2S-DMA:
+    git: https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA.git
+    version: '3.1.0'
+  # Network OTA over a USB Ethernet adapter, as in caltreat_chipper_reader (docs/ota.md).
+  usb_eth:
+    path: '../../shared_esp_components/usb_eth'
+  espressif/mdns: '^1.14.1'
+  net_ota:
+    path: '../../shared_esp_components/net_ota'

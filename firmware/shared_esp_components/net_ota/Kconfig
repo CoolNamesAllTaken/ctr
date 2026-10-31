@@ -1,0 +1,31 @@
+menu "Network OTA (net_ota)"
+
+    config NET_OTA_PORT
+        int "HTTP port of the update server"
+        default 80
+        range 1 65535
+
+    config NET_OTA_MAX_SOCKETS
+        int "Max open sockets of the server net_ota starts itself"
+        default 2
+        range 1 7
+        help
+            httpd reserves 3 more sockets internally. The default of 2 leaves most of
+            LWIP_MAX_SOCKETS for the application's own client connections.
+
+    config NET_OTA_BUF_SIZE
+        int "Receive buffer size (bytes)"
+        default 4096
+        range 1024 65536
+
+    config NET_OTA_CONFIRM_TIMEOUT_S
+        int "Seconds a new image has to call net_ota_mark_valid()"
+        default 120
+        range 10 3600
+        help
+            After an update the new image boots as PENDING_VERIFY. If it has not called
+            net_ota_mark_valid() within this time, net_ota restarts the chip and the
+            bootloader rolls back to the previous image. Needs
+            BOOTLOADER_APP_ROLLBACK_ENABLE.
+
+endmenu

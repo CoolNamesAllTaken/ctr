@@ -1,0 +1,39 @@
+config USB_ETH_DRV_RTL815X
+    bool "Realtek RTL815x (RTL8152, RTL8153B)"
+    default y
+    help
+        Vendor driver for Realtek RTL8152 (0bda:8152) and RTL8153B (0bda:8153) adapters,
+        derived from FreeBSD ure(4). The chip is identified by its version register, so
+        RTL8153A and RTL8156 chips with these IDs are rejected.
+
+if USB_ETH_DRV_RTL815X
+
+    config USB_ETH_RTL815X_RX_SIZE_8152_HS
+        int "RTL8152 bulk-IN transfer size at high speed (bytes)"
+        default 16384
+        range 2048 65536
+        help
+            Used when USB_ETH_RX_XFER_SIZE is 0 and the adapter runs at high speed
+            (ESP32-P4). The chip aggregates several frames per transfer; frames that do
+            not fit continue in the next transfer.
+
+    config USB_ETH_RTL815X_RX_SIZE_8153B_HS
+        int "RTL8153B bulk-IN transfer size at high speed (bytes)"
+        default 16384
+        range 4096 65536
+        help
+            Used when USB_ETH_RX_XFER_SIZE is 0 and the adapter runs at high speed. The
+            chip's RX aggregation threshold (USB_RX_EARLY_SIZE) is derived from it. On a
+            100 Mbit/s link 16 KiB and 32 KiB (FreeBSD's RTL8153 buffer size) gave the
+            same TCP receive rate on the ESP32-P4; 32 KiB costs 64 KiB more internal RAM
+            with 4 transfers in flight and may help at gigabit rates (not measured).
+
+    config USB_ETH_RTL815X_RX_SIZE_FS
+        int "Bulk-IN transfer size at full speed (bytes)"
+        default 4096
+        range 1600 16384
+        help
+            Used when USB_ETH_RX_XFER_SIZE is 0 and the adapter runs at full speed
+            (ESP32-S3), for every chip.
+
+endif

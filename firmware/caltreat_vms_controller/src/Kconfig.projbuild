@@ -1,0 +1,27 @@
+menu "CalTreat VMS network"
+
+    config VMS_BACKEND_URL
+        string "Backend base URL (no trailing slash)"
+        default "https://ctr-web-487080838958.us-west1.run.app"
+
+    config VMS_BACKEND_PROBE_S
+        int "Seconds between backend health checks while reachable"
+        default 30
+        range 5 3600
+
+    config VMS_POLL_S
+        int "Seconds between polls of the timetable"
+        default 10
+        range 2 600
+
+    config VMS_STALE_S
+        int "Show 'real-time information unavailable' after this many seconds without a good poll"
+        default 120
+        range 10 3600
+
+    config VMS_NET_REINIT_S
+        int "Reinstall the Ethernet driver after this many seconds without an address"
+        default 300
+        range 30 86400
+
+endmenu

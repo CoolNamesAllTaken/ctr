@@ -1,0 +1,15 @@
+version: "0.2.0"
+description: "usb_eth: USB Ethernet adapters as an esp_eth MAC/PHY over the USB Host library; chip-independent core with drivers (rtl815x: Realtek RTL8152, RTL8153B)"
+license: BSD-2-Clause
+targets:
+  - esp32s3
+  - esp32p4
+tags:
+  - ethernet
+  - usb
+  - usb_host
+  - usb_ethernet
+  - rtl8152
+  - rtl8153
+dependencies:
+  idf: ">=5.4,<6.0"

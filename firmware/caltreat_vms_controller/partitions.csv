@@ -1,0 +1,10 @@
+# Name,   Type, SubType, Offset,   Size, Flags
+# Two app slots for network OTA (net_ota), see docs/ota.md. The rest of the 32 MB flash is unused.
+# Offsets are explicit: PlatformIO computes the upload address of firmware.bin from this file itself,
+# starting at 0 instead of after the partition table, so with blank offsets it would flash the app to
+# the wrong place.
+nvs,      data, nvs,     0x9000,   0x6000,
+otadata,  data, ota,     0xf000,   0x2000,
+phy_init, data, phy,     0x11000,  0x1000,
+ota_0,    app,  ota_0,   0x20000,  0x640000,
+ota_1,    app,  ota_1,   0x660000, 0x640000,

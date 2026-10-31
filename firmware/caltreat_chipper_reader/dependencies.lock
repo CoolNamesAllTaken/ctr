@@ -37,6 +37,26 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 2.9.0
+  espressif/led_strip:
+    component_hash: 097f698887601de00bed7ff58f91b9e074fa1ae1bcf53582034b01191cc88e9f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.1.0~1
+  espressif/mdns:
+    component_hash: ef0766474b37459f6ad22461e453a8713e780e831a7c993b16919d817988dff6
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.14.1
   idf:
     source:
       type: idf
@@ -48,11 +68,39 @@ dependencies:
       registry_url: https://components.espressif.com/
       type: service
     version: 9.4.0
+  net_ota:
+    dependencies:
+    - name: idf
+      version: '>=5.4,<6.0'
+    - name: espressif/mdns
+      version: ^1.14.1
+    source:
+      path: /Users/nano/Documents/git_checkouts/ctr/firmware/shared_esp_components/net_ota
+      type: local
+    targets:
+    - esp32s3
+    - esp32p4
+    version: 0.1.0
+  usb_eth:
+    dependencies:
+    - name: idf
+      version: '>=5.4,<6.0'
+    source:
+      path: /Users/nano/Documents/git_checkouts/ctr/firmware/shared_esp_components/usb_eth
+      type: local
+    targets:
+    - esp32s3
+    - esp32p4
+    version: 0.2.0
 direct_dependencies:
 - espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_port
+- espressif/led_strip
+- espressif/mdns
 - idf
 - lvgl/lvgl
-manifest_hash: f53056c6875eb07427381e99b61450b18f71fb1e7d2b83b2f62829df7d194df1
+- net_ota
+- usb_eth
+manifest_hash: 6472e782cf312a1099093f0ce4dc95cebe434a10a4ccde59664eef427afd5a04
 target: esp32p4
 version: 2.0.0
