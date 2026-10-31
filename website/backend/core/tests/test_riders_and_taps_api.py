@@ -41,13 +41,19 @@ def test_create_rider_with_card(client):
     response = post(
         client,
         "/api/riders/",
-        {"name": " Ada ", "card_uid": "04:A1:B2", "balance": "20.00"},
+        {
+            "name": " Ada ",
+            "costume": " Witch ",
+            "card_uid": "04:A1:B2",
+            "balance": "20.00",
+        },
     )
 
     assert response.status_code == 201
     assert response.json() == {
         "id": Rider.objects.get().id,
         "name": "Ada",
+        "costume": "Witch",
         "card_uid": "04a1b2",
         "balance": "20.00",
     }

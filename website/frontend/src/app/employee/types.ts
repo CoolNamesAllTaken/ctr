@@ -29,6 +29,7 @@ export const DIRECTION_LABELS: Record<Direction, string> = {
 export type Rider = {
   id: number;
   name: string;
+  costume: string;
   card_uid: string | null;
   balance: string | null;
 };
