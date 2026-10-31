@@ -1040,7 +1040,7 @@ import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 from nicegui import app, run, ui
 
-from . import cars, hw, lcfw, lcfw_ui, listen, network_ui, recordings, recordings_ui, safety, theme
+from . import cars, health, health_ui, hw, lcfw, lcfw_ui, listen, network_ui, recordings, recordings_ui, safety, speedups, theme
 from .config import (
     BOARD_PINS,
     BUILTIN_FUNCTIONS,
@@ -1073,6 +1073,13 @@ BRAKE_TIME = 10.0  # s, full speed to a halt with STOP ("Costume")
 BRAKE_TIME_REAL = 35.0  # s (~1 m/s², a service brake)
 LOOP = 1 << 18  # ~5.5 s noise loops
 PORT = int(os.environ.get("CALTREAT_PORT", "8080"))
+speedups.install()  # cheaper page builds (speedups.py)
+# The sound threads (Router, players, engine reader) need Python's GIL several times per 10.7 ms block. A busy web
+# side (a phone opening the settings page builds hundreds of elements) holds it in slices of 5 ms by default, so
+# the sound thread waited 5 ms at each step and fell behind (gaps, underruns). 0.5 ms slices fix most of that for a
+# few % of CPU (2 cores, a phone reloading the settings page nonstop: ~380 gaps and ~800 card underruns in 40 s ->
+# ~7 and ~15; with the GC tuning below and the longer waits, ~2-7 underruns).
+sys.setswitchinterval(float(os.environ.get("CALTREAT_GIL_SLICE_MS", "0.5")) / 1000)
 STATIC = Path(__file__).parent / "static"
 
 # Lighting controller boards get DHCP addresses on eth0 (NetworkManager's shared connection: the Pi is
@@ -1674,6 +1681,10 @@ class Device:
     cards) are dropped, so a slow or missing card never holds up the others."""
 
     QUEUE = 1  # blocks kept ahead (~11 ms), on top of the pipe (~21 ms) and the ALSA buffer
+    # How long the player waits for a late block before it plays silence instead: most of the ALSA buffer, so a
+    # short hiccup is ridden out by the card's buffer instead of becoming a gap (it was 30 ms: every stall over 30 ms
+    # was a gap even with sound still buffered).
+    WAIT = max(0.03, 0.6 * hw.BUFFER_MS / 1000)
     STALL_KILL = 2.0  # s a stalled card may stay stuck before its player is restarted
 
     def __init__(self, key, card):
@@ -1685,8 +1696,10 @@ class Device:
         self.error = None
         self.proc = None
         self.stall_since = 0.0
-        self.underruns = 0
+        self.underruns = 0  # blocks the Router didn't have in time (played as silence: a gap)
         self.dropped = 0
+        self.xruns = 0  # aplay's own underruns ("underrun!!!" on its stderr): the card ran dry
+        self.errs = collections.deque(maxlen=20)  # the player's other stderr lines
         self.blocks = 0  # blocks written to the current player
         self.written = collections.deque(maxlen=6000)  # (engine sample clock, block index), fake-audio runs only
         self.thread = threading.Thread(target=self._run, name=f"caltreat-out-{key}", daemon=True)
@@ -1727,7 +1740,7 @@ class Device:
 
     def _pop(self):
         with self.cond:
-            self.cond.wait_for(lambda: self.q or not self.running, 0.03)
+            self.cond.wait_for(lambda: self.q or not self.running, self.WAIT)
             frames, t = self.q.pop(0) if self.q else (None, None)
             self.cond.notify_all()
         if frames is None:
@@ -1738,8 +1751,18 @@ class Device:
         self.blocks += 1
         return (np.clip(frames, -1, 1) * 32767).astype("<i2").tobytes()
 
+    def _read_errs(self, proc):
+        """The player's stderr, as it comes: aplay prints "underrun!!! (at least 12.3 ms long)" when the card ran dry."""
+        for line in proc.stderr:
+            line = line.decode(errors="replace").strip()
+            if "underrun" in line:
+                self.xruns += 1
+            elif line:
+                self.errs.append(line)
+
     def _run(self):
         name = self.key.replace(":", "-").replace("#", "")
+        health.raise_priority(threading.get_native_id())
         while self.running:
             try:
                 proc = self.proc = hw.player(self.card, 2, name)
@@ -1747,11 +1770,14 @@ class Device:
                 self.ok, self.error = False, str(e)
                 time.sleep(2)
                 continue
+            health.raise_priority(proc.pid)
             try:
                 fcntl.fcntl(proc.stdin.fileno(), fcntl.F_SETPIPE_SZ, 4096)  # keep the pipe from adding latency
             except OSError:
                 pass
-            err = ""
+            self.errs.clear()
+            errs = threading.Thread(target=self._read_errs, args=(proc,), name=f"caltreat-err-{self.key}", daemon=True)
+            errs.start()
             self.blocks = 0
             self.written.clear()
             try:
@@ -1772,9 +1798,9 @@ class Device:
                     proc.wait(timeout=1)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                err = proc.stderr.read().decode(errors="replace").strip()
+                errs.join(timeout=1)
             if self.running:
-                self.error = err or "player exited"
+                self.error = "; ".join(self.errs) or "player exited"
                 print(f"caltreat: sound card {self.key} ({self.card}) failed, retrying: {self.error}", file=sys.stderr)
                 time.sleep(2)
 
@@ -1881,6 +1907,7 @@ class Router:
         return y
 
     def _run(self):
+        health.raise_priority(threading.get_native_id())
         last_plan = 0.0
         clock = time.monotonic()
         while self.running:
@@ -2465,7 +2492,9 @@ if os.environ.get("CALTREAT_ENGINE") == "numpy" or not node_path:
     ENGINE_NOTE = "old sounds: " + ("CALTREAT_ENGINE=numpy" if node_path else node_why + " (README: Node.js)")
     print(f"caltreat: {ENGINE_NOTE}", file=sys.stderr)
 else:
-    sidecar = Sidecar(node_path, warmup=os.environ.get("CALTREAT_ENGINE_WARMUP") != "0")
+    sidecar = Sidecar(node_path, warmup=os.environ.get("CALTREAT_ENGINE_WARMUP") != "0",
+                      read_timeout=max(0.03, 0.5 * hw.BUFFER_MS / 1000))  # a late engine block: wait, the cards have sound
+    sidecar.on_ready = health.raise_process_priority
     audio = V12Engine(sidecar)
     ENGINE_NOTE = None
 intercom = Intercom(lambda: cfg.data["intercom"])
@@ -2696,6 +2725,45 @@ def intercom_api():
         out["devices"] = {k: {"written": list(d.written), "underruns": d.underruns, "dropped": d.dropped}
                           for k, d in router.devices.items()}
     return out
+
+
+# ---------- health (health.py): /api/health, the settings page's Health panel, pi/tools/diagnose.sh ----------
+def audio_health():
+    """Sound counters for the health monitor (its thread)."""
+    cards = {k: {"card": d.card, "ok": d.ok, "underruns": d.underruns, "xruns": d.xruns, "dropped": d.dropped}
+             for k, d in list(router.devices.items())}
+    eng = {"kind": "v12" if sidecar else "numpy"}
+    if sidecar:
+        eng.update(ready=sidecar.ready, late=sidecar.late, restarts=sidecar.restarts, realtime=sidecar.realtime(),
+                   perf=dict(sidecar.perf), error=sidecar.error)
+    return {"cards": cards, "engine": eng, "buffer_ms": hw.BUFFER_MS}
+
+
+def gc_tune():
+    """Python's full garbage collections walk every object and hold the GIL meanwhile: on a busy Pi they took
+    0.1-1 s, and the sound threads starved (underruns). Freeze what start-up made (modules, the engine, NiceGUI:
+    it lives as long as the app), so a full collection only walks what the pages made since; and collect 10x less
+    often (pages make lots of short-lived objects), which made full collections rare: under a phone reloading the
+    settings page nonstop, card underruns went from ~11 to ~2 in 40 s (the young collections stay a few ms)."""
+    import gc
+    if os.environ.get("CALTREAT_GC_FREEZE", "1") == "1":
+        gc.collect()
+        gc.freeze()
+    young = int(os.environ.get("CALTREAT_GC_THRESHOLD", "20000"))  # Python's default: 2000
+    if young:
+        gc.set_threshold(young, 10, 10)
+
+
+monitor = health.Monitor(audio_health)
+app.on_startup(gc_tune)
+app.on_startup(monitor.start)
+app.on_shutdown(monitor.stop)
+
+
+@app.get("/api/health")
+async def health_api():
+    """Loop lag, sound counters, the Pi's CPU / temperature / power / Wi-Fi (async: answers only when the loop runs)."""
+    return monitor.snapshot()
 
 
 # ---------- HTTPS and the extra ports (listen.py) ----------
@@ -3504,6 +3572,7 @@ async def settings(client):
 
             recordings_ui.section(recs, rec_player, live, el=el, sbtn=sbtn, slider=slider)
             network_ui.section(servers)  # Wi-Fi joined / served, wired, ports (read-only)
+            health_ui.section(monitor)  # CPU, power, event loop, sound cards, engine, Wi-Fi drops
 
             errs = ui.html("", sanitize=False, tag="div").classes("errs full")
             live.append(lambda: errs.set_content(_esc(errors())))
@@ -3564,8 +3633,16 @@ async def settings(client):
     ui.timer(0.5, tick)
 
 
+# A Wi-Fi blip often doesn't close the connection: a page notices only when the pings stop. NiceGUI derives them
+# from reconnect_timeout (ping every 0.8x, 0.4x to answer) and keeps a dropped page that long. Its 3 s default
+# reloaded the page after any blip over ~3 s (the page goes blank and comes back as new); 6 s keeps it through a
+# longer blip, and a dead link still shows NiceGUI's "connection lost" banner within ~7 s.
+RECONNECT_S = 6
+
+
 def main():
-    ui.run(host="0.0.0.0", port=PORT, title="Caltreat", reload=False, show=False, dark=True, favicon=theme.ICON)
+    ui.run(host="0.0.0.0", port=PORT, title="Caltreat", reload=False, show=False, dark=True, favicon=theme.ICON,
+           reconnect_timeout=RECONNECT_S)
 
 
 if __name__ in {"__main__", "__mp_main__"}:

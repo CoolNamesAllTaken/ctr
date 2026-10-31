@@ -287,3 +287,19 @@ def test_stop_brakes_to_a_halt():
     assert t == pytest.approx(0.5 * m.BRAKE_TIME, abs=0.2)  # braking, not coasting (30 s from full)
     a.render()  # standing: the air release is scheduled
     assert a.squeal_done and a.air_at is not None and not a.braking  # squeal near the end, then the air
+
+
+def test_health_reports_the_cards_and_the_engine(running):
+    """/api/health's sound part: every playing card's counters, the engine's render speed per bus."""
+    assert wait_for(lambda: len(m.router.devices) == 3 and all(d.ok for d in m.router.devices.values()), 5)
+    if m.sidecar:
+        assert wait_for(lambda: len(m.sidecar.perf) == 3, 5), m.sidecar.perf
+    h = m.audio_health()
+    assert set(h["cards"]) == {"jack", "usb:1.2", "usb:1.3"}
+    assert all({"underruns", "xruns", "dropped", "ok"} <= set(c) for c in h["cards"].values())
+    assert h["buffer_ms"] == hw.BUFFER_MS
+    if m.sidecar:
+        assert set(h["engine"]["perf"]) == {"front", "inside", "rear"} and h["engine"]["realtime"] > 1
+    import asyncio
+    snap = asyncio.run(m.health_api())
+    assert "loop_lag_ms" in snap

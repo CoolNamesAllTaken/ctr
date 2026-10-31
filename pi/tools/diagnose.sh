@@ -579,10 +579,16 @@ if apps and "loop_lag_ms" in apps[-1]:
     lag = max((a.get("loop_lag_max_ms", 0) for a in apps), default=0)
     (W if lag > 200 else I)(f"event loop lag max {lag:.0f} ms (app's own measurement)")
     for k, d in (a1.get("cards") or {}).items():
-        u = d.get("underruns", 0) - (a0.get("cards") or {}).get(k, {}).get("underruns", 0)
-        dr = d.get("dropped", 0) - (a0.get("cards") or {}).get(k, {}).get("dropped", 0)
-        (W if u else I)(f"card {k}: {u} underruns, {dr} dropped blocks during the run "
-                        f"(since start: {d.get('underruns', 0)} / {d.get('dropped', 0)})")
+        c0 = (a0.get("cards") or {}).get(k, {})
+        u = d.get("underruns", 0) - c0.get("underruns", 0)
+        x = d.get("xruns", 0) - c0.get("xruns", 0)
+        dr = d.get("dropped", 0) - c0.get("dropped", 0)
+        (W if u or x else I)(f"card {k}: {u} underruns (gaps), {x} aplay underruns, {dr} dropped blocks during the run "
+                             f"(since start: {d.get('underruns', 0)} / {d.get('xruns', 0)} / {d.get('dropped', 0)})")
+    if a1.get("sound_priority") is False:
+        W("the sound runs at normal priority: run sudo ~/caltreat/setup/network.sh once and reboot")
+    if a1.get("loop_last_block"):
+        I(f"last event loop freeze: {a1['loop_last_block'].get('ms')} ms in {a1['loop_last_block'].get('where')}")
     eng = a1.get("engine") or {}
     if eng:
         late = eng.get("late", 0) - (a0.get("engine") or {}).get("late", 0)
