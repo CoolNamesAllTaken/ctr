@@ -6,7 +6,12 @@
 #  - neither: the access point stays where it is (on its last or the default channel).
 # It also brings the access point back up if it is down. Runs from the NetworkManager dispatcher (wlan0 up/down)
 # and from caltreat-ap-channel.timer (every minute). Installed by pi/setup/network.sh.
+#
+# --restart: restart the access point even if its channel is right and it is up, so changed settings (a new
+# password or name) take effect. `nmcli connection load` alone leaves a running connection as it was.
 set -euo pipefail
+RESTART=""
+[[ "${1:-}" == --restart ]] && RESTART=1
 # shellcheck source=/dev/null
 . "${CALTREAT_NETWORK_CONF:-/etc/caltreat/network.conf}"
 LOCK="${CALTREAT_LOCK:-/run/caltreat-ap-channel.lock}"
@@ -59,4 +64,7 @@ fi
 if ! nmcli -t -f NAME connection show --active | grep -qxF "$AP_CON"; then
   log "access point $AP_CON is down, starting it"
   nmcli connection up "$AP_CON" >/dev/null || log "could not start $AP_CON (see: journalctl -u NetworkManager)"
+elif [[ -n "$RESTART" ]]; then
+  log "restarting access point $AP_CON with its new settings"
+  nmcli connection up "$AP_CON" >/dev/null || log "could not restart $AP_CON (see: journalctl -u NetworkManager)"
 fi

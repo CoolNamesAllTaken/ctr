@@ -389,9 +389,9 @@ else
   if changed "$STA_FILE"; then run nmcli connection load "$STA_FILE"; fi
   if changed "$AP_FILE"; then
     run nmcli connection load "$AP_FILE"
-    # Moves the access point to the joined network's channel and starts it (wlan0 isn't touched: an SSH session
-    # over it stays up).
-    if ((DRY)); then note "would run: $SBIN/caltreat-ap-channel"; else run "$SBIN/caltreat-ap-channel" || true; fi
+    # Moves the access point to the joined network's channel and (re)starts it, so a new password or name takes
+    # effect (wlan0 isn't touched: an SSH session over it stays up).
+    if ((DRY)); then note "would run: $SBIN/caltreat-ap-channel --restart"; else run "$SBIN/caltreat-ap-channel" --restart || true; fi
   elif changed "$DNSMASQ_FILE" "$HOSTS_FILE"; then
     # dnsmasq reads its files when the shared connection starts
     run nmcli connection up "$AP_CON" || true
