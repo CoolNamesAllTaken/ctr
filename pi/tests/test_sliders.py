@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from caltreat.sidecar import find_node
+
 sync_api = pytest.importorskip("playwright.sync_api")
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -102,7 +104,8 @@ def test_sliders_keep_their_values(app, viewport):
         other.goto(url)
         assert values(other) == dragged
 
-        mix = json.loads(cfg_file.read_text())["mix"]
+        saved = json.loads(cfg_file.read_text())
+        mix = saved["mix12"] if find_node()[0] else saved["mix"]  # the v12 engine's Mix, or the old engine's
         assert [str(v) for v in mix.values()] == [v for _, v in dragged[:len(mix)]]
 
         stop()

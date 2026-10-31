@@ -44,12 +44,28 @@ The code is in [`src/caltreat/`](src/caltreat/), built with
 
 | File | What |
 | --- | --- |
-| `__main__.py` | the sound engine (a port of [`publish.html`](publish.html)), speakers, lights, boards and both pages. The first ~1000 lines are an older version kept as comments. |
+| `__main__.py` | speakers, lights, boards and both pages; the old numpy sound engine (a port of [`publish.html`](publish.html)), used only when Node.js is missing. The first ~1000 lines are an older version kept as comments. |
+| `sidecar.py` | starts the v12 engine (`../../engine/sidecar.js`) and reads each speaker's sound from it. |
 | `sequencer.py` | Depart / Arrive / Crossing / Auto run and the horn signals (a port of the v12 browser app's `sequencer.js`). |
 | `intercom.py` | push-to-talk: one talker at a time, jitter buffer, resampling. |
 | `config.py` | the settings file. |
 | `hw.py`, `fakesink.py` | sound cards (`aplay`, `amixer`), and the stand-in used without them. |
 | `static/` | the page's look (`cab.css`), its script (`cab.js`), the microphone capture (`mic-worklet.js`) and the fonts (Barlow, IBM Plex Mono; SIL Open Font License), served by the Pi so the page looks right without internet. |
+
+## Sounds: the v12 engine (Node.js)
+
+The sounds are the v12 KISS engine (`engine/engine.js`, `engine/buses.js`, copied unchanged from the
+caltrain-sounds repo by `engine/sync.sh`), run by Node.js in `engine/sidecar.js`, which the app starts and restarts.
+Each speaker gets its own v12 mix: FRONT outside at the front cab, INSIDE in the car (doors leak outside sounds in),
+REAR outside at the back (no horn), exactly what the v12 page's Output selector plays.
+
+- **Install Node.js on the Pi once** (needs internet): `sudo apt install nodejs` (Raspberry Pi OS Bookworm's 18.x
+  works). Without it the app plays the old sounds and the page shows ⚠.
+- **Door recording**: not in this repo (it isn't ours to publish). `deploy.sh` copies it from the private repo
+  `ctr-assets` (cached on your computer; `--no-assets` skips it) to `~/.config/caltreat/assets/` on the Pi; or upload
+  `doors_v10.wav` + `doors_v10.json` in Settings → Sound. Without it the doors are the engine's synth doors.
+- **CPU**: one core per speaker bus on a Pi 4 (about 0.4–0.6 of a core each, worst moments ~0.85); a Pi 5 has
+  room to spare. After a start the engine warms up for ~25 s on a Pi 4 (silent) before it plays.
 
 ## Deploying to the train
 
@@ -175,9 +191,8 @@ plugged in, ✗ when it isn't. ▶ plays a 440 Hz test tone on that speaker;
 each card's own mixer volume. Defaults: FRONT = the jack, INSIDE = USB #1
 (both channels), REAR = none.
 
-All speakers play the same train sound for now: the engine makes one mix.
-Separate outside/inside mixes (as the browser app's v11 has) would be a
-change to the sound engine.
+Each speaker plays its own v12 mix (see "Sounds"). Front / Rear env under Settings → Sound sets what the outside
+speakers sound like (on the train, approaching, platform, distance).
 
 ### Lights
 
