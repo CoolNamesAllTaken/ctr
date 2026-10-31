@@ -38,7 +38,13 @@ def latest(name):
 
 def file_pos(written, t):
     """Engine sample clock -> sample index in a fake card's recording (blocks dropped or padded are accounted)."""
-    bt, bi = max((w for w in written if w[0] is not None and w[0] <= t), key=lambda w: w[0])
+    while True:  # the audio thread appends while we read: copy it first (a copy can still race; retry)
+        try:
+            snap = list(written)
+            break
+        except RuntimeError:
+            continue
+    bt, bi = max((w for w in snap if w[0] is not None and w[0] <= t), key=lambda w: w[0])
     return bi * m.BLOCK + (t - bt)
 
 
