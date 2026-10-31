@@ -201,7 +201,7 @@ def complete(c):
     for o in out["relay"]:
         o.setdefault("fn", None)
         o.setdefault("alt", False)
-    for uid, b in out["boards"].items():
+    for b in out["boards"].values():
         b.setdefault("outputs", board_defaults(b.get("name", "?"))["outputs"])
         for o in b["outputs"]:
             o.setdefault("fn", None)
@@ -237,7 +237,7 @@ def diff(old, new, path=""):
             else:
                 out += diff(old[k], new[k], p)
     elif isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
-        for i, (a, b) in enumerate(zip(old, new)):
+        for i, (a, b) in enumerate(zip(old, new, strict=True)):
             out += diff(a, b, f"{path}[{i}]")
     elif old != new:
         out.append(f"{path}: {json.dumps(old, ensure_ascii=False)[:60]} -> {json.dumps(new, ensure_ascii=False)[:60]}")

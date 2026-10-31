@@ -1041,7 +1041,17 @@ from fastapi import WebSocket, WebSocketDisconnect
 from nicegui import app, ui
 
 from . import hw
-from .config import BOARD_PINS, BUILTIN_FUNCTIONS, CHANNELS, MIX_KEYS, RELAY_CHANNELS, SPEAKERS, Config, board_defaults, diff, parse
+from .config import (
+    BOARD_PINS,
+    BUILTIN_FUNCTIONS,
+    CHANNELS,
+    RELAY_CHANNELS,
+    SPEAKERS,
+    Config,
+    board_defaults,
+    diff,
+    parse,
+)
 from .intercom import Intercom
 from .sequencer import SIGNALS, Sequencer, signal_pattern
 
@@ -1983,7 +1993,7 @@ class Io:
             raise OSError(r.stderr.strip() or f"pinctrl exited with {r.returncode}")
 
     def _write(self, want, force=False):
-        changed = [(p, w) for p, w, s in zip(self.PINS, want, self.relay_state) if force or w != s]
+        changed = [(p, w) for p, w, s in zip(self.PINS, want, self.relay_state, strict=True) if force or w != s]
         self.relay_state = list(want)
         for level in (True, False):
             pins = [p for p, w in changed if w == level]
@@ -2592,7 +2602,7 @@ def engineer_html():
       <svg class="dicon" viewBox="0 0 56 44" aria-hidden="true"><rect class="f" x="2" y="2" width="52" height="40" rx="3"/><rect class="l" id="leafL" x="5" y="5" width="22.5" height="34" rx="1.5"/><rect class="l" id="leafR" x="28.5" y="5" width="22.5" height="34" rx="1.5"/></svg><b>Doors</b></button>
     <button class="hornbtn" id="horn" aria-label="Horn (hold)" title="Horn (Space / H): hold to sound"><b>HORN</b><span>hold</span></button>
   </section>
-  <button class="talk" id="talk" aria-label="Hold to talk on the inside speakers"><i class="lvl"></i>{ICON_MIC}<b>Talk</b><span>hold</span><em class="lock" aria-hidden="true">&#x1F512; https</em></button>
+  <button class="talk" id="talk" aria-label="Hold to talk on the inside speakers"><i class="lvl"></i>{ICON_MIC}<b>Talk</b><span>hold</span><em class="lock" aria-hidden="true">https ↗</em></button>
   <section class="ctl power">
     <h2><label for="throttle" title="Power controller (arrow keys, 0 = off)">&#x25B2; Power</label><output id="thrOut">0 %</output></h2>
     <input type="range" id="throttle" min="0" max="100" step="1" value="0" aria-label="Throttle">
@@ -2776,7 +2786,7 @@ def device_options():
 
 
 CH_LABEL = {"both": "L+R", "left": "L", "right": "R"}
-SPK = {"front": ("Front", "Outside, front cab"), "inside": ("Inside", "Passengers + intercom 🎤"),
+SPK = {"front": ("Front", "Outside, front cab"), "inside": ("Inside", "Passengers + the intercom"),
        "rear": ("Rear", "Outside, back")}
 KIND_LABEL = {"manual": "manual (engineer page)", "doors": "doors open / moving", "crossing": "crossing signal",
               "horn": "while the horn sounds", "bell": "while the bell rings"}
@@ -2888,7 +2898,7 @@ async def settings(client):
                                        "Sound card: USB #n = the n-th card by USB port; USB port x.y = that socket")
                                 select([(c, CH_LABEL[c]) for c in CHANNELS], s["ch"],
                                        lambda v, sp=sp: (d["speakers"][sp].__setitem__("ch", v), save()),
-                                       "Channel", "sel sm")
+                                       "Channel", "sel narrow")
                                 tb = sbtn("▶", lambda sp=sp: test_speaker(sp), "Test tone on this speaker")
                             slider("Level", 0, 100, s["level"],
                                    lambda v, sp=sp: (d["speakers"][sp].__setitem__("level", v), save()))
@@ -2914,9 +2924,9 @@ async def settings(client):
                         d["volumes"][dev] = v
                         save()
                     slider(label, 0, 100, cur, setv)
-                el("div", "mapdia", "Raw test: " + " ".join(
-                    f"{p}" for _, p in usb) if usb else "No USB sound cards found",
-                   "USB sound cards found, by port")
+                el("h2", "", "Channel test", "440 Hz on one channel of one card, whatever is mapped to it")
+                if not usb:
+                    el("div", "mapdia", "No USB sound cards found")
                 with el("div", "ctlz"):
                     for dev, label in [("jack", "Jack"), *[(f"usb:{p}", f"USB {p}") for _, p in usb]]:
                         for ch in ("left", "right"):
@@ -2930,7 +2940,7 @@ async def settings(client):
 
             # --- intercom ---
             with el("section", "ctl set"):
-                el("h2", "", "Intercom 🎤 → Inside", "Push-to-talk from the engineer page plays on the Inside "
+                el("h2", "", "Intercom → Inside", "Push-to-talk from the engineer page plays on the Inside "
                                                     "speaker(s); the train sound there is ducked while talking")
                 ic = d["intercom"]
                 slider("Mic gain", -20, 30, ic["mic_gain_db"], lambda v: (ic.__setitem__("mic_gain_db", v), save()),
@@ -2943,7 +2953,7 @@ async def settings(client):
                        "A held talk button stops after this long (safety)", "s", 5)
                 ic_st = ui.html("", sanitize=False, tag="div").classes("mapdia")
                 live.append(lambda: ic_st.set_content(
-                    _esc(("🎤 talking · " if intercom.talking else "idle · ")
+                    _esc(("● talking · " if intercom.talking else "idle · ")
                          + f"buffer {intercom.stats.get('buffer_ms', 0):.0f} ms · frames {intercom.stats.get('frames', 0)}"
                          + f" · lost {intercom.stats.get('lost', 0)} · underruns {intercom.stats.get('underruns', 0)}")))
 
@@ -2961,8 +2971,8 @@ async def settings(client):
                                "Light function driving this output")
                         select([("0", "A"), ("1", "B")], "1" if ocfg.get("alt") else "0",
                                lambda v: on_map("alt", v == "1"),
-                               "Phase: A and B outputs of one function alternate when it flashes", "sel sm")
-                        tb = sbtn("⏻", lambda: io.toggle_output(key),
+                               "Phase: A and B outputs of one function alternate when it flashes", "sel narrow")
+                        tb = sbtn("◐", lambda: io.toggle_output(key),
                                   "By hand: switch on / off. Mapped: force on as a test (tap again to release)")
 
                 def show():
@@ -2996,7 +3006,7 @@ async def settings(client):
                                         io.cycle(fid)
                                     mb = sbtn(io.mode(f["id"]), cyc, "Off / on / flash (as on the engineer page)")
                                 if f["id"] not in BUILTIN_IDS:
-                                    sbtn("🗑", lambda fid=f["id"]: delete_fn(fid), f"Delete {f['name']} (its outputs "
+                                    sbtn("✕", lambda fid=f["id"]: delete_fn(fid), f"Delete {f['name']} (its outputs "
                                                                                     "go back to by hand)", "warn")
 
                         def show_fn(lamp=lamp, fid=f["id"], mb=mb if f["kind"] == "manual" else None):
@@ -3047,7 +3057,7 @@ async def settings(client):
                                            js_handler="(e) => emit(e.target.value)")
                             el("small", "", f"{'MAC ' + rb.mac + '<br>' if rb and rb.mac else ''}ID {uid}<br>"
                                             f"{rb.host if rb else 'not found'}", "MAC · chip ID · address")
-                            sbtn("All ⏻", lambda uid=uid: io.all_off(uid), "All outputs by hand off, tests released")
+                            sbtn("All ○", lambda uid=uid: io.all_off(uid), "All outputs by hand off, tests released")
                         with el("div", "rows"):
                             for i, o in enumerate(bc["outputs"]):
                                 out_row((uid, i), f"GP{i}", f"{bc['name']}", o,

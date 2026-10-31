@@ -215,12 +215,14 @@ body { font: 15px/1.45 var(--body) !important; }
 .sbtn.warn { border-color: var(--red); color: #ff8a80; }
 .sbtn:disabled { opacity: .4; }
 .sel { min-width: 0; flex: 1 1 150px; font: 500 15px var(--body); background: var(--bezel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 9px 8px; height: 40px; }
-.sel.sm { flex: 0 0 auto; }
+.sel.narrow { flex: 0 0 auto; width: auto; }
 .lbl { font: 600 12px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; margin-top: 6px; }
 .lbl output { color: var(--ink); font-family: var(--mono); letter-spacing: 0; }
 .ctl input[type=range] { height: 40px; }
 .mapdia { font: 500 12px/1.4 var(--mono); color: var(--muted); }
-.boardhd { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.boardhd { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.boardhd .hd-right { flex: 1 1 160px; min-width: 0; }
+.boardhd small { overflow-wrap: anywhere; }
 .boardhd b { font: 700 18px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; }
 .boardhd small { font: 500 11px/1.2 var(--mono); color: var(--muted); }
 .boardhd .txt { flex: 0 1 8em; width: 8em; }  /* names are <= 12 chars; the default input width pushed All off a phone screen */
