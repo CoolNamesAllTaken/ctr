@@ -1040,7 +1040,7 @@ import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
 from nicegui import app, ui
 
-from . import hw
+from . import hw, lcfw, lcfw_ui
 from .config import BOARD_PINS, BUILTIN_FUNCTIONS, CHANNELS, MIX_KEYS, RELAY_CHANNELS, SPEAKERS, Config, board_defaults, diff, parse
 from .intercom import Intercom
 from .sequencer import SIGNALS, Sequencer, signal_pattern
@@ -2165,6 +2165,7 @@ class RemoteBoard:
                     self.mac = ":".join(f"{b:02X}" for b in struct.pack(">3H", *conn.read_input(self.IR_MAC, 3)))
                 except ModbusError:
                     self.mac = ""
+            self.fw = lcfw.read_info(conn)  # firmware version etc. (settings page)
             with self.lock:
                 sent = list(self.want)
             self._configure(conn, sent)
@@ -2255,7 +2256,7 @@ class BoardFinder:
 
     def scan(self):
         with self.lock:
-            busy = {b.host for b in self.boards.values() if b.connected}
+            busy = {b.host for b in self.boards.values() if b.connected or getattr(b, "paused", False)}  # lcfw update
         hosts = [f"{REMOTE_NET}{i}" for i in REMOTE_HOSTS if f"{REMOTE_NET}{i}" not in busy]
         with ThreadPoolExecutor(max_workers=64) as pool:
             found = list(zip(hosts, pool.map(self._probe, hosts)))
@@ -3060,6 +3061,7 @@ async def settings(client):
                         link.classes(replace="lampdot on" if on else "lampdot")
                         box.classes(replace="board" if on else "board offline")
                     live.append(show_board)
+                lcfw_ui.section(finder, live)  # firmware versions and updates
 
             errs = ui.html("", sanitize=False, tag="div").classes("errs full")
             live.append(lambda: errs.set_content(_esc(errors())))

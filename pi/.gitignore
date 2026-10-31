@@ -1,2 +1,4 @@
 .venv/
 __pycache__/
+# Lighting controller image deployed with deploy.sh --with-lc-firmware
+lc-firmware/
