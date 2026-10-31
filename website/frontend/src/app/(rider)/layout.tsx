@@ -19,7 +19,7 @@ const NAV_LINKS = [
   { label: "Fares", href: null },
   { label: "Rider Information", href: "/alerts" },
   { label: "Projects", href: null },
-  { label: "About Caltreat", href: "/" },
+  { label: "About Caltreat", href: null },
 ];
 
 // The rider-facing site's chrome, styled after caltrain.com. Light only, like
@@ -36,7 +36,7 @@ export default function RiderLayout({
       <header>
         <div className="mx-auto w-full max-w-[1160px] px-4">
           <div className="flex h-[112px] items-center">
-            <Link href="/">
+            <Link href="/schedule">
               <Image
                 src="/brand/caltreat-logo.svg"
                 alt="Caltreat"

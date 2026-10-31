@@ -75,15 +75,33 @@ def test_create_rider_rejects_invalid(client, card, overrides):
 
 
 @pytest.mark.django_db
-def test_list_riders(client, card):
+def test_create_rider_gets_starting_balance(client):
+    response = post(client, "/api/riders/", {"name": "Ada", "card_uid": "04a1b2"})
+
+    assert response.status_code == 201
+    assert response.json()["balance"] == "20.00"
+
+
+@pytest.mark.django_db
+def test_list_riders_newest_first(client, card):
     Rider.objects.create(name="Bo")
 
     response = client.get("/api/riders/")
 
     assert [(r["name"], r["card_uid"]) for r in response.json()] == [
-        ("Ada", "04a1b2"),
         ("Bo", None),
+        ("Ada", "04a1b2"),
     ]
+
+
+@pytest.mark.django_db
+def test_list_riders_limit(client, card):
+    Rider.objects.create(name="Bo")
+    Rider.objects.create(name="Cy")
+
+    response = client.get("/api/riders/?limit=2")
+
+    assert [r["name"] for r in response.json()] == ["Cy", "Bo"]
 
 
 @pytest.mark.django_db
