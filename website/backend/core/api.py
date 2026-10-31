@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Literal
 
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from ninja import Field, Router, Schema, Status
@@ -25,7 +25,6 @@ from core.models import (
     TrainCar,
     TrainStatus,
 )
-from core.starter_data import load_starter_data
 
 
 class EmployeePassphrase(APIKeyHeader):
@@ -350,25 +349,6 @@ def update_train(request, train_id: int, payload: TrainPatch):
     train.name = name
     train.save(update_fields=["name"])
     return train
-
-
-class StarterDataOut(Schema):
-    traincars: int
-    stations: int
-    kiosks: int
-
-
-@router.post("/starter-data/", response=StarterDataOut)
-def create_starter_data(request):
-    """Add the starter train cars, stations and kiosks that are missing."""
-    try:
-        return load_starter_data()
-    except IntegrityError as error:
-        raise HttpError(
-            409,
-            "Starter data clashes with existing records (e.g. another station "
-            "at the same position). Nothing was loaded.",
-        ) from error
 
 
 # What a new Chipper card is loaded with.
