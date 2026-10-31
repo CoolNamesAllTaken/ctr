@@ -36,14 +36,18 @@ def latest(name):
     return x, meta["start"]
 
 
-def file_pos(written, t):
-    """Engine sample clock -> sample index in a fake card's recording (blocks dropped or padded are accounted)."""
-    while True:  # the audio thread appends while we read: copy it first (a copy can still race; retry)
+def snapshot(written):
+    """A copy of a card's block log; the audio thread appends while we read (a copy can still race; retry)."""
+    while True:
         try:
-            snap = list(written)
-            break
+            return list(written)
         except RuntimeError:
             continue
+
+
+def file_pos(written, t):
+    """Engine sample clock -> sample index in a fake card's recording (blocks dropped or padded are accounted)."""
+    snap = snapshot(written)
     bt, bi = max((w for w in snap if w[0] is not None and w[0] <= t), key=lambda w: w[0])
     return bi * m.BLOCK + (t - bt)
 
@@ -139,11 +143,11 @@ def test_intercom_plays_inside_and_ducks_the_train(running):
     # the train sound on INSIDE is ducked by 18 dB while talking: what the card played over the INSIDE bus the engine
     # made, block by block (the same samples, so the horn's own level changes don't matter; FRONT is no reference
     # with the v12 engine, its mix differs from INSIDE's and their ratio wanders by ~1.5 dB)
-    written = list(m.router.devices["usb:1.3"].written)  # one copy: the router thread keeps appending
+    written = snapshot(m.router.devices["usb:1.3"].written)
     blocks = {t: bi for t, bi in written if t is not None}
 
     def gain(s0, s1):  # engine sample clock window, relative to the claim
-        ts = [t for t in bus_inside if t_claim + s0 * sr <= t and t + m.BLOCK <= t_claim + s1 * sr and t in blocks]
+        ts = [t for t in sorted(bus_inside) if t_claim + s0 * sr <= t and t + m.BLOCK <= t_claim + s1 * sr and t in blocks]
         out = np.concatenate([inside[blocks[t] * m.BLOCK:(blocks[t] + 1) * m.BLOCK, 1] for t in ts])
         ref = np.concatenate([bus_inside[t] for t in ts])
         assert len(ts) * m.BLOCK > 0.2 * sr and rms(ref) > 0.002
