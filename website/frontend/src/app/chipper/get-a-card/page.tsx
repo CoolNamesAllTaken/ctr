@@ -8,7 +8,10 @@ export default function GetACardPage() {
     <InfoPage
       title="Get a card"
       intro="Chipper Cards come from Caltreat staff, already loaded and ready to tap."
-      drawing="staff handing a rider a Chipper Card"
+      drawing={{
+        name: "handoff",
+        subject: "Staff handing a rider a Chipper Card",
+      }}
     >
       <section>
         <h2>Ask Caltreat staff</h2>

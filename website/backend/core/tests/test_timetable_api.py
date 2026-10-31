@@ -1,6 +1,7 @@
-from datetime import time
+from datetime import datetime, time
 
 import pytest
+from django.utils import timezone
 
 from core.models import Alert, Arrival, Kiosk, Station, Train, TrainCar
 
@@ -33,22 +34,33 @@ def test_timetable(client):
 
 
 @pytest.mark.django_db
-def test_timetable_for_kiosk(anonymous_client, client):
+def test_timetable_for_kiosk(anonymous_client, client, monkeypatch):
+    now = timezone.make_aware(datetime(2026, 10, 31, 9, 30))
+    monkeypatch.setattr(timezone, "now", lambda: now)
     sj = Station.objects.create(name="San Jose", zone=2, position=0)
     sf = Station.objects.create(name="San Francisco", zone=1, position=1)
     car = TrainCar.objects.create(number="1", capacity=20)
-    late = Train.objects.create(name="103", direction="northbound", traincar=car)
-    Arrival.objects.create(train=late, station=sj, time=time(10))
-    Arrival.objects.create(train=late, station=sf, time=time(11))
-    early = Train.objects.create(name="101", direction="northbound", traincar=car)
-    Arrival.objects.create(train=early, station=sj, time=time(8))
-    Arrival.objects.create(train=early, station=sf, time=time(9))
-    elsewhere = Train.objects.create(name="201", direction="southbound", traincar=car)
-    Arrival.objects.create(train=elsewhere, station=sj, time=time(12))
+
+    def train(name, *stops):
+        train = Train.objects.create(name=name, direction="southbound", traincar=car)
+        for station, at in stops:
+            Arrival.objects.create(train=train, station=station, time=at)
+        return train
+
+    def from_sf(name, at_sf):
+        return train(name, (sf, at_sf), (sj, time(at_sf.hour, 59)))
+
+    from_sf("101", time(9))  # Already gone.
+    late = from_sf("103", time(9, 20))  # Due before now, but running late.
+    from_sf("105", time(9, 32))
+    from_sf("107", time(10))
+    from_sf("109", time(11))  # Past the sign's three.
+    train("201", (sj, time(9, 35)), (sf, time(9, 40)))  # Ends here.
+    train("203", (sj, time(9, 45)))  # Doesn't stop here.
     Kiosk.objects.create(id="kiosk-sf", name="Platform", station=sf)
     client.post(
         "/api/delays/",
-        {"train_id": late.id, "delay_minutes": 4, "from_station_id": sf.id},
+        {"train_id": late.id, "delay_minutes": 15},
         content_type="application/json",
     )
 
@@ -56,8 +68,9 @@ def test_timetable_for_kiosk(anonymous_client, client):
 
     assert response.status_code == 200
     assert response.json() == [
-        {"train_name": "101", "time": "09:00:00", "delay_minutes": 0},
-        {"train_name": "103", "time": "11:00:00", "delay_minutes": 4},
+        {"train_name": "105", "time": "09:32:00", "delay_minutes": 0},
+        {"train_name": "103", "time": "09:20:00", "delay_minutes": 15},
+        {"train_name": "107", "time": "10:00:00", "delay_minutes": 0},
     ]
 
 

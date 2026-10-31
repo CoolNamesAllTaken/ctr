@@ -1,25 +1,33 @@
 import Image from "next/image";
 import Link from "next/link";
-import { DrawingPlaceholder } from "./drawing";
+import { Drawing, type DrawingName } from "./drawing";
 
-const TILES = [
+const TILES: {
+  title: string;
+  body: string;
+  href: string;
+  drawing: { name: DrawingName; subject: string };
+}[] = [
   {
     title: "New to Chipper?",
     body: "Find out how tapping on and off works.",
     href: "/how-it-works",
-    drawing: "a rider tapping a card on a kiosk",
+    drawing: { name: "tap", subject: "A rider tapping a card on a kiosk" },
   },
   {
     title: "Get a card",
     body: "Caltreat staff issue cards, loaded and ready to ride.",
     href: "/get-a-card",
-    drawing: "staff handing a rider a Chipper Card",
+    drawing: {
+      name: "handoff",
+      subject: "Staff handing a rider a Chipper Card",
+    },
   },
   {
     title: "Adding value",
     body: "Running low? Staff can top up your card.",
     href: "/get-a-card#adding-value",
-    drawing: "staff topping up a card",
+    drawing: { name: "topup", subject: "Value being added to a card" },
   },
 ];
 
@@ -97,7 +105,7 @@ export default function ChipperHome() {
                 href={href}
                 className="group flex h-full flex-col gap-4 rounded-2xl border border-[#dbe6f4] p-5 shadow-sm transition-shadow hover:shadow-lg"
               >
-                <DrawingPlaceholder subject={drawing} />
+                <Drawing {...drawing} />
                 <h2 className="text-xl font-bold text-[#132a67] group-hover:text-[#2979d9]">
                   {title} <span aria-hidden="true">→</span>
                 </h2>
