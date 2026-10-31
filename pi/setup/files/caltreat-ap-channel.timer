@@ -1,0 +1,11 @@
+# Installed by pi/setup/network.sh
+[Unit]
+Description=Caltreat Wi-Fi access point channel check, every minute
+
+[Timer]
+OnBootSec=40
+OnUnitActiveSec=60
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target

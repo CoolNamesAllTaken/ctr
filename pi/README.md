@@ -3,19 +3,21 @@
 The web app that runs the train's lights and sounds. It runs on the Raspberry
 Pi on the train and serves two pages:
 
-- **http://caltreat.local:8080/**: the **engineer page**. Big buttons only:
+- **http://caltreat.local/**: the **engineer page**. Big buttons only:
   the cab display, Depart / Arrive / Crossing, HORN (hold), BELL, DOORS,
   TALK (hold, the intercom), power with AIR and STOP, the horn signals and the
   lights. Hover (or long-press) any control for what it does.
-- **http://caltreat.local:8080/settings** (the ⚙ on the engineer page): the
+- **http://caltreat.local/settings** (the ⚙ on the engineer page): the
   sound mix, which sound card and channel each speaker is on, the intercom
   levels, what every light output does, and a backup of all of it.
 
-Open them from any phone or laptop on the same network. Every browser
-controls the same train, so they all show the same state.
+Open them from any phone or laptop on the Pi's own Wi-Fi, **Caltreat Cab**,
+or on the "caltreat" Wi-Fi the Pi joins (see [Network](#network-caltreatlocal-and-the-cab-wi-fi)). Every browser
+controls the same train, so they all show the same state. The old addresses
+with `:8080` / `:8443` keep working.
 
 For the intercom (TALK) the phone needs the **https** address,
-**https://caltreat.local:8443/**: see [Intercom and HTTPS](#intercom-and-https).
+**https://caltreat.local/**: see [Intercom and HTTPS](#intercom-and-https).
 
 What it does:
 
@@ -128,8 +130,8 @@ poetry run python -m caltreat
 ## Intercom and HTTPS
 
 Phones only let a web page use the microphone on a secure (https) page, so
-the app also serves **https://caltreat.local:8443/** (the plain
-http://caltreat.local:8080/ keeps working for everything else; its TALK
+the app also serves **https://caltreat.local/** (the plain
+http://caltreat.local/ keeps working for everything else; its TALK
 button shows "https ↗" and opens the https page).
 
 The train has no internet and no real domain, so the app makes its own
@@ -142,14 +144,21 @@ alternative (a real certificate) needs a domain name and internet to renew it.
 
 Accept it once per phone:
 
-- **iPhone (Safari)**: open https://caltreat.local:8443/ → "This Connection
+- **iPhone (Safari)**: open https://caltreat.local/ → "This Connection
   Is Not Private" → **Show Details** → **visit this website** → **Visit
   Website**. Then hold TALK and allow the microphone. If Safari forgets it
   later, do the same again.
-- **Android (Chrome)**: open https://caltreat.local:8443/ → "Your connection
+- **Android (Chrome)**: open https://caltreat.local/ → "Your connection
   is not private" → **Advanced** → **Proceed to caltreat.local (unsafe)**.
   Then hold TALK and allow the microphone. If `caltreat.local` doesn't open,
-  use the Pi's address, e.g. https://10.26.81.200:8443/.
+  use the Pi's address: https://10.42.0.1/ on Caltreat Cab.
+
+The certificate names caltreat.local, caltreat, 10.42.0.1 and every address
+the Pi has had. When the Pi gets a new address (it joins another Wi-Fi), the
+app makes the certificate again with the same key and the new address added;
+phones that accepted the old one ask once more (Safari and Chrome remember the
+certificate, not the key). Phones on Caltreat Cab use caltreat.local /
+10.42.0.1, which don't change, so this is rare.
 
 Using it: hold TALK, speak, let go. One person talks at a time (the button
 shows busy on the other phones). It stops by itself when you let go, switch
@@ -166,6 +175,62 @@ without Wi-Fi (10 ms frames, a jitter buffer that starts at 20 ms and grows
 only if the network stutters, 40 ms of sound card buffer). If the log shows
 sound card underruns on the Pi, give the cards more buffer: set
 `Environment=CALTREAT_ALSA_BUFFER_MS=60` in `caltreat.service`.
+
+## Network: caltreat.local and the cab Wi-Fi
+
+The Pi is on three networks at once:
+
+| Network | Interface | The Pi | What for |
+| --- | --- | --- | --- |
+| **caltreat** Wi-Fi (joins it) | `wlan0` | from its DHCP | your laptop (deploys), internet if it has some |
+| **Caltreat Cab** Wi-Fi (its own) | `uap0` | `10.42.0.1`, hands out `10.42.0.x` | phones on the train |
+| wired | `eth0` | `192.168.50.1` | the lighting controller boards |
+
+The built-in Wi-Fi has one radio: it can be a client and an access point at
+the same time, but only on one channel. So Caltreat Cab follows the channel of
+the caltreat Wi-Fi (it moves when the Pi joins, and phones reconnect by
+themselves); while caltreat is out of range Caltreat Cab stays up on its last
+channel and the Pi keeps looking for caltreat. Put the caltreat Wi-Fi on
+2.4 GHz (or 5 GHz channel 36-48 / 149-165; the access point can't use radar
+channels).
+
+**Set it up once** (on the Pi, after a deploy; safe to run again):
+
+```sh
+sudo ~/caltreat/setup/network.sh --dry-run   # shows what it would change
+sudo WIFI_COUNTRY=US ~/caltreat/setup/network.sh
+```
+
+It asks for the caltreat Wi-Fi's password (unless the Pi already has a
+connection for it, which it keeps) and a password for Caltreat Cab (8-63
+characters). Passwords are kept only in NetworkManager's files on the Pi
+(`/etc/NetworkManager/system-connections/`, root only), never in the repo.
+Other names: `STA_SSID=…` (the Wi-Fi to join), `AP_SSID=…` (the Pi's own).
+To change a password, run it again with `AP_PASS=…` or `STA_PASS=…` set;
+`--undo` removes it all. It also lets ordinary users open ports 80 and up
+(`net.ipv4.ip_unprivileged_port_start=80`), so the app serves the pages
+without `:8080`.
+
+**Phones**: join **Caltreat Cab**, open **http://caltreat.local/** (or
+http://10.42.0.1/). If the phone says the Wi-Fi has no internet, choose to
+stay connected (or turn off mobile data for a moment). caltreat.local works by
+mDNS, and on Caltreat Cab also by its DNS for phones without mDNS.
+
+Settings → Network shows both Wi-Fis, the wired network and the ports.
+
+A USB Wi-Fi adapter for the access point is more robust (its own radio, any
+channel): plug it in and run the setup with `AP_IFACE=wlan1`.
+
+Troubleshooting on the Pi:
+
+```sh
+nmcli device status                 # wlan0 → caltreat, uap0 → caltreat-ap, eth0 → boards
+iw dev                              # wlan0 and uap0 on the same channel
+journalctl -t caltreat-ap           # access point channel moves
+journalctl -u NetworkManager -b     # why a connection failed
+nmcli connection up caltreat-ap     # start the access point by hand
+sysctl net.ipv4.ip_unprivileged_port_start   # 80 after the setup
+```
 
 ## Settings, backup and restore
 
@@ -232,7 +297,7 @@ USB cards, the sound goes nowhere), and without the relays:
 ```sh
 cd pi
 poetry install
-CALTREAT_PORT=8090 CALTREAT_HTTPS_PORT=8453 CALTREAT_CONFIG_DIR=/tmp/caltreat-config poetry run python -m caltreat
+CALTREAT_PORT=8090 CALTREAT_HTTP_PORTS= CALTREAT_HTTPS_PORT=8453 CALTREAT_CONFIG_DIR=/tmp/caltreat-config poetry run python -m caltreat
 ```
 
 `CALTREAT_FAKE_AUDIO=<folder>` also writes what each card would play to raw
@@ -282,3 +347,5 @@ copied into `src/caltreat/lcctl/`; a test fails when the copies differ.
 5. From your computer, run `pi/deploy.sh`. The first deploy creates the
    virtualenv, which needs internet on the Pi. The app needs `openssl` for
    its https certificate (Raspberry Pi OS has it).
+6. On the Pi, once: `sudo ~/caltreat/setup/network.sh` (see
+   [Network](#network-caltreatlocal-and-the-cab-wi-fi)).

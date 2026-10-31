@@ -15,8 +15,12 @@
 set -euo pipefail
 
 HOST="${CALTREAT_HOST:-caltreat@caltreat.local}"
-URL="http://${HOST#*@}:8080/"
-HTTPS_URL="https://${HOST#*@}:8443/"  # self-signed certificate, made by the app on the Pi (for the intercom mic)
+NAME="${HOST#*@}"
+URL="http://$NAME:8080/"         # always there (the app's own server)
+HTTPS_URL="https://$NAME:8443/"  # self-signed certificate, made by the app on the Pi (for the intercom mic)
+# Without a port (80 / 443) once the Pi's network setup has run (setup/network.sh, see README "Network")
+URL80="http://$NAME/"
+URL443="https://$NAME/"
 REPO="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 STAGE="$(mktemp -d)"
 SOCK="/tmp/caltreat-deploy-$$.sock"  # short: macOS caps socket paths at 104 chars
@@ -124,9 +128,15 @@ EOF
 echo "==> Waiting for $URL"
 for _ in $(seq 30); do
   if curl -fs -o /dev/null --max-time 2 "$URL"; then
-    # -k: the certificate is self-signed (see README, "Intercom and HTTPS")
-    if curl -fsk -o /dev/null --max-time 3 "$HTTPS_URL"; then
+    # -k: the certificate is self-signed (see README, "Intercom and HTTPS"). 80 / 443 start beside 8080.
+    up() { curl -fs"${2:-}" -o /dev/null --max-time 3 "$1"; }
+    for _ in 1 2 3 4 5; do up "$URL80" && up "$URL443" k && break; sleep 1; done
+    if up "$URL80" && up "$URL443" k; then
+      echo "Deployed $VERSION. Caltreat is up at $URL80 (intercom: $URL443; also $URL and $HTTPS_URL)"
+    elif up "$HTTPS_URL" k; then
       echo "Deployed $VERSION. Caltreat is up at $URL (intercom: $HTTPS_URL)"
+      echo "Not yet without a port ($URL80 / $URL443): run once on the Pi: sudo ~/caltreat/setup/network.sh" \
+        "(README, Network)" >&2
     else
       echo "Deployed $VERSION. Caltreat is up at $URL, but $HTTPS_URL doesn't answer (no intercom). Logs:" >&2
       "${SSH[@]}" "$HOST" journalctl --user-unit caltreat -n 20 --no-pager | grep -i https >&2 || true

@@ -1,0 +1,14 @@
+# Installed by pi/setup/network.sh: the access point's interface beside @STA_IFACE@ (see caltreat-uap0).
+[Unit]
+Description=Caltreat Wi-Fi access point interface (@AP_IFACE@ beside @STA_IFACE@)
+BindsTo=sys-subsystem-net-devices-@STA_IFACE@.device
+After=sys-subsystem-net-devices-@STA_IFACE@.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/caltreat-uap0 up
+ExecStop=/usr/local/sbin/caltreat-uap0 down
+
+[Install]
+WantedBy=sys-subsystem-net-devices-@STA_IFACE@.device

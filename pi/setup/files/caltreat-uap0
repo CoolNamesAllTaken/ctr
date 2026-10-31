@@ -1,0 +1,41 @@
+#!/bin/bash
+# Creates (up) or removes (down) the Pi's access point interface (uap0) on the same radio as the Wi-Fi client
+# interface (wlan0). The built-in Wi-Fi (brcmfmac) can run one client and one access point at once, on one channel.
+# Installed by pi/setup/network.sh as /usr/local/sbin/caltreat-uap0, run by caltreat-uap0.service.
+set -euo pipefail
+# shellcheck source=/dev/null
+. "${CALTREAT_NETWORK_CONF:-/etc/caltreat/network.conf}"
+
+case "${1:-up}" in
+  up)
+    if [[ -e "${CALTREAT_SYS:-/sys}/class/net/$AP_IFACE" ]]; then
+      echo "$AP_IFACE already exists"
+      exit 0
+    fi
+    phy="$(cat "${CALTREAT_SYS:-/sys}/class/net/$STA_IFACE/phy80211/name")"
+    iw phy "$phy" interface add "$AP_IFACE" type __ap
+    # Its own MAC address (wlan0's with the "locally administered" bit set), so phones and the Wi-Fi
+    # network the Pi joins never see two devices with one address.
+    mac="$(cat "${CALTREAT_SYS:-/sys}/class/net/$STA_IFACE/address")"
+    first=$((16#${mac:0:2}))
+    new=$((first | 2))
+    if ((new == first)); then
+      last=$((16#${mac:15:2} ^ 1))
+      ap_mac="$(printf '%02x%s%02x' "$first" "${mac:2:13}" "$last")"
+    else
+      ap_mac="$(printf '%02x%s' "$new" "${mac:2}")"
+    fi
+    ip link set dev "$AP_IFACE" address "$ap_mac"
+    echo "made $AP_IFACE ($ap_mac) on $phy beside $STA_IFACE"
+    ;;
+  down)
+    if [[ -e "${CALTREAT_SYS:-/sys}/class/net/$AP_IFACE" ]]; then
+      iw dev "$AP_IFACE" del
+      echo "removed $AP_IFACE"
+    fi
+    ;;
+  *)
+    echo "usage: $0 up|down" >&2
+    exit 2
+    ;;
+esac
