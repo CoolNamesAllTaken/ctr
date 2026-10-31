@@ -1,7 +1,7 @@
 """Where each train is right now, for the rider-facing live map.
 
-There's no GPS. When the conductor has marked a train stopped, moving or out
-of service (see train_status), the map shows that; otherwise a train's
+There's no GPS. When the conductor has marked a train stopped, moving, out of
+service or canceled (see train_status), the map shows that; otherwise a train's
 location is worked out from today's timetable and its live delays.
 
 A location is a pair of stations and how far the train has got between them,
@@ -41,7 +41,7 @@ def locate(stops, now):
 
 def follow_status(stops, status, now):
     """Like locate(), but from the conductor's status."""
-    if status.state == TrainStatus.State.OUT_OF_SERVICE:
+    if status.state in TrainStatus.OFF_THE_LINE:
         return None
     station_ids = [stop["station_id"] for stop in stops]
     # The run may have been changed since the status was set.

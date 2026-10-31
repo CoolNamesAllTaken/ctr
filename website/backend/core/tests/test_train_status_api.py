@@ -8,7 +8,7 @@ from core.models import Arrival, Station, Train, TrainCar, TrainStatus
 @pytest.fixture
 def stations():
     return [
-        Station.objects.create(name="Mountain View", zone=2, position=0),
+        Station.objects.create(name="San Jose", zone=2, position=0),
         Station.objects.create(name="Palo Alto", zone=2, position=1),
         Station.objects.create(name="San Francisco", zone=1, position=2),
     ]
@@ -100,6 +100,16 @@ def test_mark_train_out_of_service(client, train, stations):
 
     assert response.status_code == 200
     assert response.json()["state"] == "out_of_service"
+    assert response.json()["station_id"] is None
+    assert live_trains(client) == []
+
+
+@pytest.mark.django_db
+def test_cancel_train(client, train, stations):
+    response = post(client, {"train_id": train.id, "state": "canceled"})
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "canceled"
     assert response.json()["station_id"] is None
     assert live_trains(client) == []
 

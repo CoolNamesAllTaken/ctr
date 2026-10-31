@@ -20,7 +20,7 @@ export async function simulateTap(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           card_uid: formData.get("card_uid"),
-          kiosk_id: Number(formData.get("kiosk_id")),
+          kiosk_id: formData.get("kiosk_id"),
         }),
       },
     );

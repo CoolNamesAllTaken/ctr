@@ -23,8 +23,8 @@ export function TapForm({
     { status: "idle" },
   );
 
-  // Kiosks come ordered by station; group them under their station.
-  const stations = Map.groupBy(kiosks, (kiosk) => kiosk.station_name);
+  // Kiosks come ordered by station, and all have one; group them under it.
+  const stations = Map.groupBy(kiosks, (kiosk) => kiosk.station_name ?? "");
 
   return (
     <form

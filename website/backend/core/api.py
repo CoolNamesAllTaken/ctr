@@ -6,6 +6,7 @@ from typing import Literal
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Max
 from django.utils import timezone
 from ninja import Field, Router, Schema, Status
 from ninja.errors import HttpError
@@ -109,9 +110,109 @@ def list_traincars(request):
     return TrainCar.objects.order_by("number")
 
 
+class StationIn(Schema):
+    name: str
+    zone: int = Field(ge=1, le=99)
+    # How many stations along the line from the south end it goes; leave out
+    # to add it at the north end.
+    position: int | None = Field(None, ge=0)
+
+
+class StationPatch(Schema):
+    name: str | None = None
+    zone: int | None = Field(None, ge=1, le=99)
+    # Where to move it, counted like StationIn.position.
+    position: int | None = Field(None, ge=0)
+
+
+def get_station(station_id):
+    station = Station.objects.filter(id=station_id).first()
+    if station is None:
+        raise HttpError(422, "That station no longer exists.")
+    return station
+
+
+def clean_station_name(name, station=None):
+    name = name.strip()
+    if not name:
+        raise HttpError(422, "Station name is required.")
+    others = Station.objects.exclude(id=station.id) if station else Station.objects
+    if others.filter(name__iexact=name).exists():
+        raise HttpError(422, f"There's already a station called {name}.")
+    return name
+
+
+def place_station(station, index):
+    """Move a saved station to this index along the line, counting from the
+    south end, and renumber the whole line from 0 so there are no gaps."""
+    line = list(
+        Station.objects.select_for_update().exclude(id=station.id).order_by("position")
+    )
+    line.insert(min(index, len(line)), station)
+    # Positions are unique and checked row by row, so first move every station
+    # clear of the numbers they're about to take.
+    clear = max(s.position for s in line) + len(line) + 1
+    for i, s in enumerate(line):
+        s.position = clear + i
+    Station.objects.bulk_update(line, ["position"])
+    for i, s in enumerate(line):
+        s.position = i
+    Station.objects.bulk_update(line, ["position"])
+
+
 @router.get("/stations/", response=list[StationOut])
 def list_stations(request):
     return Station.objects.all()
+
+
+@router.post("/stations/", response={201: StationOut})
+def create_station(request, payload: StationIn):
+    name = clean_station_name(payload.name)
+    with transaction.atomic():
+        top = Station.objects.aggregate(top=Max("position"))["top"]
+        station = Station.objects.create(
+            name=name, zone=payload.zone, position=0 if top is None else top + 1
+        )
+        if payload.position is not None:
+            place_station(station, payload.position)
+    return Status(201, station)
+
+
+@router.patch("/stations/{station_id}/", response=StationOut)
+def update_station(request, station_id: int, payload: StationPatch):
+    """Rename a station, change its zone, or move it along the line."""
+    station = get_station(station_id)
+    with transaction.atomic():
+        if payload.name is not None:
+            station.name = clean_station_name(payload.name, station)
+        if payload.zone is not None:
+            station.zone = payload.zone
+        station.save(update_fields=["name", "zone"])
+        if payload.position is not None:
+            place_station(station, payload.position)
+    station.refresh_from_db()
+    return station
+
+
+@router.delete("/stations/{station_id}/", response={204: None})
+def delete_station(request, station_id: int):
+    """Delete a station that no train stops at and no kiosk is assigned to."""
+    station = get_station(station_id)
+    trains = Train.objects.filter(arrivals__station=station).distinct().order_by("name")
+    if trains:
+        names = ", ".join(train.name for train in trains)
+        raise HttpError(422, f"{station.name} is a stop on trains {names}.")
+    if station.kiosks.exists():
+        raise HttpError(
+            422, f"{station.name} still has kiosks. Move or remove them first."
+        )
+    with transaction.atomic():
+        station.delete()
+        # Close the gap it leaves in the line.
+        first = Station.objects.select_for_update().order_by("position").first()
+        if first:
+            place_station(first, 0)
+    return Status(204, None)
 
 
 @router.get("/trains/", response=list[TrainOut])
@@ -215,10 +316,36 @@ def create_rider(request, payload: RiderIn):
 
 
 class KioskOut(Schema):
-    id: int
+    id: str
     name: str
-    station_id: int
-    station_name: str = Field(alias="station.name")
+    # Unset for a kiosk that has tapped but not been assigned a station yet.
+    station_id: int | None
+    station_name: str | None = Field(None, alias="station.name")
+
+
+class KioskIn(Schema):
+    name: str
+    # Leave out to take the kiosk out of service.
+    station_id: int | None = None
+
+
+def normalize_kiosk_id(kiosk_id):
+    """Kiosk IDs go in URL paths, so they're kept to URL-safe characters."""
+    kiosk_id = kiosk_id.strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}", kiosk_id):
+        raise HttpError(
+            422,
+            "Kiosk ID must be up to 64 letters, digits, dots, colons, dashes "
+            "and underscores, starting with a letter or digit.",
+        )
+    return kiosk_id
+
+
+def get_kiosk(kiosk_id):
+    kiosk = Kiosk.objects.filter(id=kiosk_id).first()
+    if kiosk is None:
+        raise HttpError(422, "That kiosk no longer exists.")
+    return kiosk
 
 
 @router.get("/kiosks/", response=list[KioskOut])
@@ -226,9 +353,43 @@ def list_kiosks(request):
     return Kiosk.objects.select_related("station").order_by("station__position", "name")
 
 
+@router.put("/kiosks/{kiosk_id}/", response=KioskOut)
+def update_kiosk(request, kiosk_id: str, payload: KioskIn):
+    """Name a kiosk and assign it to a station."""
+    kiosk = get_kiosk(kiosk_id)
+    name = payload.name.strip()
+    if not name:
+        raise HttpError(422, "Kiosk name is required.")
+    station = None
+    if payload.station_id is not None:
+        station = get_station(payload.station_id)
+        if station.kiosks.exclude(id=kiosk.id).filter(name=name).exists():
+            raise HttpError(422, f"{station.name} already has a kiosk called {name}.")
+    kiosk.name = name
+    kiosk.station = station
+    kiosk.save(update_fields=["name", "station"])
+    return kiosk
+
+
+@router.delete("/kiosks/{kiosk_id}/", response={204: None})
+def delete_kiosk(request, kiosk_id: str):
+    """Delete a kiosk with no taps, e.g. one registered by mistake. A kiosk
+    that taps again afterwards is registered again."""
+    kiosk = get_kiosk(kiosk_id)
+    if kiosk.taps.exists():
+        raise HttpError(
+            422,
+            f"Kiosk {kiosk.id} has taps on record, so it can't be deleted. "
+            "Take it out of service instead.",
+        )
+    kiosk.delete()
+    return Status(204, None)
+
+
 class TapIn(Schema):
     card_uid: str
-    kiosk_id: int
+    # The kiosk's own ID. A kiosk not seen before is registered on its first tap.
+    kiosk_id: str
 
 
 class TapOut(Schema):
@@ -269,9 +430,16 @@ def list_taps(request, limit: int = 20):
 
 @router.post("/taps/", response={201: TapResultOut})
 def create_tap(request, payload: TapIn):
-    """Simulate a card tap at a kiosk, charging or refunding the fare."""
+    """Record a card tap at a kiosk, charging or refunding the fare."""
+    card_uid = normalize_uid(payload.card_uid)
+    kiosk_id = normalize_kiosk_id(payload.kiosk_id)
+    # Registered outside the tap's transaction, so a new kiosk stays registered
+    # even if its first tap is refused.
+    kiosk, _ = Kiosk.objects.select_related("station").get_or_create(
+        id=kiosk_id, defaults={"name": kiosk_id}
+    )
     try:
-        tap, tap_on = fares.tap(normalize_uid(payload.card_uid), payload.kiosk_id)
+        tap, tap_on = fares.tap(card_uid, kiosk)
     except fares.FareError as error:
         raise HttpError(422, str(error)) from error
     return Status(
@@ -387,7 +555,7 @@ class TrainStatusIn(Schema):
     train_id: int
     state: TrainStatus.State
     # Where it's stopped, or the stop it's just left. Not needed when out of
-    # service.
+    # service or canceled.
     station_id: int | None = None
 
 
@@ -414,8 +582,8 @@ def list_train_statuses(request):
 
 @router.post("/train-statuses/", response=TrainStatusOut)
 def set_train_status(request, payload: TrainStatusIn):
-    """Mark today's run of a train stopped, moving or out of service. The live
-    map follows this instead of the timetable."""
+    """Mark today's run of a train stopped, moving, out of service or canceled.
+    The live map follows this instead of the timetable."""
     train = get_train(payload.train_id)
     now = timezone.now()
     try:

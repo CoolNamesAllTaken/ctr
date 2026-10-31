@@ -38,8 +38,8 @@ async function TrainsTab() {
         {traincars.length === 0 || stations.length < 2 ? (
           <p className={mutedClass}>
             Add at least one train car and two stations before scheduling
-            trains, either in the Django admin or by loading the starter data
-            below.
+            trains, either by loading the starter data below or in the Django
+            admin. Stations can also be added on the Stations &amp; kiosks tab.
           </p>
         ) : (
           <NewTrainForm traincars={traincars} stations={stations} />

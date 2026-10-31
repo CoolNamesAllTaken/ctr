@@ -9,7 +9,7 @@ from core.models import Arrival, Station, Train, TrainCar
 @pytest.fixture
 def stations():
     return [
-        Station.objects.create(name="Mountain View", zone=2, position=0),
+        Station.objects.create(name="San Jose", zone=2, position=0),
         Station.objects.create(name="Palo Alto", zone=2, position=1),
         Station.objects.create(name="San Francisco", zone=1, position=2),
     ]
@@ -36,7 +36,7 @@ def test_live_map_lists_stations(client, stations):
     body = live_map(client, 8, 0)
 
     assert [s["name"] for s in body["stations"]] == [
-        "Mountain View",
+        "San Jose",
         "Palo Alto",
         "San Francisco",
     ]
@@ -57,7 +57,7 @@ def test_live_map_train_boarding_at_first_stop(client, train, stations):
     assert located["at_station_id"] == stations[0].id
     assert located["from_station_id"] == located["to_station_id"] == stations[0].id
     assert [s["station_name"] for s in located["upcoming_stops"]] == [
-        "Mountain View",
+        "San Jose",
         "Palo Alto",
         "San Francisco",
     ]
@@ -65,7 +65,7 @@ def test_live_map_train_boarding_at_first_stop(client, train, stations):
 
 @pytest.mark.django_db
 def test_live_map_train_between_stops(client, train, stations):
-    # It leaves Mountain View at 8:00 and pulls into Palo Alto a minute before
+    # It leaves San Jose at 8:00 and pulls into Palo Alto a minute before
     # its 8:11 departure, so 8:05 is halfway.
     [located] = live_map(client, 8, 5)["trains"]
 
