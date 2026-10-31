@@ -23,6 +23,13 @@ const uint32_t fw_info[3] = { 0x45325052u /* "RP2E" */, 0x4F464E49u /* "INFO" */
 // vanished without closing it; the CH9120 is reset to accept a new one.
 #define STALE_GRACE_MS      5000
 #define STALE_IDLE_MS       60000
+// With no client, the CH9120 is reset now and then so it asks for a DHCP lease
+// again: it only does that coming out of reset, so a board that booted before
+// the cable or the DHCP server was up would never get an address. The interval
+// doubles after each reset, up to the maximum, so a DHCP server slower than the
+// first interval still gets time to answer; it starts over on connect/disconnect.
+#define NO_CLIENT_RESET_MIN_MS  30000
+#define NO_CLIENT_RESET_MAX_MS  60000
 
 #define LED_WAITING   BOARD_LED_RGB(12, 12, 12)   // white: no client connected
 #define LED_CONNECTED BOARD_LED_RGB(0, 32, 0)     // green: host connected and in control
@@ -118,6 +125,7 @@ int main(void) {
     modbus_srv_init();
 
     last_request = get_absolute_time();
+    uint32_t no_client_reset_ms = NO_CLIENT_RESET_MIN_MS;
     bool usb_log = false;
 
     while (true) {
@@ -129,6 +137,7 @@ int main(void) {
             // and the first request may already be arriving.
             connected = now_connected;
             last_request = get_absolute_time();
+            no_client_reset_ms = NO_CLIENT_RESET_MIN_MS;
             printf("net: client %s\n", connected ? "connected" : "disconnected");
             if (!connected) {
                 modbus_srv_reset();
@@ -145,6 +154,11 @@ int main(void) {
                 ch9120_reset();
                 last_request = get_absolute_time();
             }
+        } else if (absolute_time_diff_us(last_request, get_absolute_time()) / 1000 > no_client_reset_ms) {
+            printf("net: no client for %lu ms, resetting CH9120\n", (unsigned long)no_client_reset_ms);
+            ch9120_reset();
+            last_request = get_absolute_time();
+            if (no_client_reset_ms < NO_CLIENT_RESET_MAX_MS) no_client_reset_ms *= 2;
         }
 
         pwm_ctl_task();

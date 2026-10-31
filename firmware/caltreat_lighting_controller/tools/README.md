@@ -83,6 +83,12 @@ dhcp-host=xx:xx:xx:xx:xx:xx,192.168.50.12   # board B
 - **Expect a reset after long silence.** A connection with no requests for
   heartbeat + 5 s (60 s with the heartbeat off) is treated as half-open: the board
   resets its CH9120 so a new connection can be made.
+- **Expect brief gaps while no client is connected.** The CH9120 only asks for a
+  DHCP lease coming out of reset, so with no client the board resets it to ask
+  again: after 30 s, then every 60 s. The board can't be reached for
+  a moment around each reset (the reset itself plus the DHCP exchange); a
+  connection attempt that lands there fails and should be retried. Connecting or
+  disconnecting starts the 30 s interval over.
 
 Failsafe and power-on defaults are pin blocks at `HR_DEFAULT_BASE`. They are
 persisted together with the heartbeat by `save()` (`CMD_SAVE`).
