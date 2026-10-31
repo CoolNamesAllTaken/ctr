@@ -1,4 +1,4 @@
-import { DrawingPlaceholder } from "./drawing";
+import { Drawing, type DrawingName } from "./drawing";
 
 // The layout shared by the Chipper info pages: a title band with a drawing,
 // then prose.
@@ -10,7 +10,7 @@ export function InfoPage({
 }: {
   title: string;
   intro: string;
-  drawing: string;
+  drawing: { name: DrawingName; subject: string };
   children: React.ReactNode;
 }) {
   return (
@@ -23,10 +23,7 @@ export function InfoPage({
             </h1>
             <p className="mt-3 max-w-2xl text-lg">{intro}</p>
           </div>
-          <DrawingPlaceholder
-            subject={drawing}
-            className="w-full max-w-[320px] bg-white md:justify-self-end"
-          />
+          <Drawing {...drawing} className="max-w-[320px] md:justify-self-end" />
         </div>
       </section>
       <div className="mx-auto flex w-full max-w-[760px] flex-col gap-10 px-4 py-12 text-lg leading-relaxed [&_h2]:mb-2 [&_h2]:text-2xl [&_h2]:font-extrabold [&_h2]:text-[#132a67]">

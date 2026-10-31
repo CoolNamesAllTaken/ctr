@@ -769,9 +769,13 @@ class TimetableOut(Schema):
     alerts: list[AlertOut]
 
 
+# How many upcoming trains a kiosk's sign has room for.
+KIOSK_TRAIN_LIMIT = 3
+
+
 class KioskTrainOut(Schema):
     train_name: str
-    # When the train is scheduled at the kiosk's station.
+    # When the train is scheduled to leave the kiosk's station.
     time: time
     delay_minutes: int
 
@@ -779,9 +783,11 @@ class KioskTrainOut(Schema):
 @router.get("/timetable/", response=TimetableOut | list[KioskTrainOut], auth=None)
 def timetable(request, kiosk_id: str | None = None):
     """Today's timetable with live delays, and the active service alerts.
-    Pass a kiosk's ID to get just the trains stopping at its station, in a
-    short form for the kiosk's display."""
-    today = timezone.localdate()
+    Pass a kiosk's ID to get just the next few trains departing from its
+    station, soonest first counting delays, in a short form for the kiosk's
+    sign."""
+    now = timezone.now()
+    today = timezone.localdate(now)
     if kiosk_id is not None:
         kiosk = Kiosk.objects.filter(id=kiosk_id.strip()).first()
         if kiosk is None:
@@ -791,17 +797,25 @@ def timetable(request, kiosk_id: str | None = None):
         runs = delays.train_runs(
             today, Train.objects.filter(arrivals__station=kiosk.station_id).distinct()
         )
-        trains = [
+        # Trains still to leave, by when they're actually expected. A train's
+        # last stop is where it ends, so it doesn't depart from there.
+        upcoming = sorted(
+            (
+                (stop["expected_at"], run["train_name"], stop)
+                for run in runs
+                for stop in run["stops"][:-1]
+                if stop["station_id"] == kiosk.station_id and stop["expected_at"] >= now
+            ),
+            key=lambda item: item[:2],
+        )
+        return [
             {
-                "train_name": run["train_name"],
+                "train_name": train_name,
                 "time": timezone.localtime(stop["scheduled_at"]).time(),
                 "delay_minutes": stop["delay_minutes"],
             }
-            for run in runs
-            for stop in run["stops"]
-            if stop["station_id"] == kiosk.station_id
+            for _, train_name, stop in upcoming[:KIOSK_TRAIN_LIMIT]
         ]
-        return sorted(trains, key=lambda train: train["time"])
     return {
         "date": today,
         "stations": Station.objects.all(),
