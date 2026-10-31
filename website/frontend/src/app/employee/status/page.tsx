@@ -29,6 +29,8 @@ function describe(run: TrainStatus) {
     }
     case "out_of_service":
       return { text: "Out of service", className: "bg-zinc-400" };
+    case "canceled":
+      return { text: "Canceled", className: "bg-red-500" };
     case null:
       return { text: "Following the timetable", className: "bg-sky-500" };
   }
@@ -108,8 +110,8 @@ export default function StatusPage() {
         Tell the live map where today&apos;s trains are. Mark a train stopped
         when it pulls in to a station and depart it when it leaves; while it
         moves, the map edges it towards the next stop until it arrives. Trains
-        you haven&apos;t marked follow the timetable, and out-of-service trains
-        are left off the map.
+        you haven&apos;t marked follow the timetable, and out-of-service and
+        canceled trains are left off the map.
       </p>
       <Suspense fallback={<p className="text-zinc-500">Loading…</p>}>
         <Statuses />

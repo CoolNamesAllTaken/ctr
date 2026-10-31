@@ -21,7 +21,7 @@ export type Train = {
 
 export const DIRECTION_LABELS: Record<Direction, string> = {
   northbound: "Northbound (towards San Francisco)",
-  southbound: "Southbound (towards Mountain View)",
+  southbound: "Southbound (towards San Jose)",
 };
 
 // Money comes from the API as decimal strings, e.g. "6.25".
@@ -117,7 +117,7 @@ export type LiveMap = {
   trains: LiveTrain[];
 };
 
-export type TrainState = "stopped" | "moving" | "out_of_service";
+export type TrainState = "stopped" | "moving" | "out_of_service" | "canceled";
 
 // Today's run of a train with what the conductor last marked it. The status
 // fields are all null while it's following the timetable.

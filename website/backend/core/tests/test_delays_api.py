@@ -8,7 +8,7 @@ from core.models import Alert, Arrival, ArrivalInstance, Station, Train, TrainCa
 @pytest.fixture
 def stations():
     return [
-        Station.objects.create(name="Mountain View", zone=2, position=0),
+        Station.objects.create(name="San Jose", zone=2, position=0),
         Station.objects.create(name="Palo Alto", zone=2, position=1),
         Station.objects.create(name="San Francisco", zone=1, position=2),
     ]
@@ -39,7 +39,7 @@ def test_list_delays_on_time(client, train):
     [run] = response.json()
     assert run["train_name"] == "101"
     assert delays(run) == [
-        ("Mountain View", 0),
+        ("San Jose", 0),
         ("Palo Alto", 0),
         ("San Francisco", 0),
     ]
@@ -77,7 +77,7 @@ def test_set_delay_from_a_stop(client, train, stations):
     assert response.status_code == 200
     run = response.json()
     assert delays(run) == [
-        ("Mountain View", 0),
+        ("San Jose", 0),
         ("Palo Alto", 15),
         ("San Francisco", 15),
     ]
@@ -94,7 +94,7 @@ def test_set_delay_updates_and_clears(client, train):
 
     [run] = client.get("/api/delays/").json()
     assert delays(run) == [
-        ("Mountain View", 0),
+        ("San Jose", 0),
         ("Palo Alto", 0),
         ("San Francisco", 0),
     ]

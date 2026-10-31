@@ -15,6 +15,7 @@ const STATE_LABELS: Record<TrainState, string> = {
   stopped: "Stopped at",
   moving: "Moving on from",
   out_of_service: "Out of service",
+  canceled: "Canceled",
 };
 
 type Step = {
@@ -27,6 +28,8 @@ type Step = {
  * depart, arrive at the next, and so on until the end of the run. */
 function nextStep(run: TrainStatus): Step | null {
   const stops = run.stops;
+  // Nothing to do until it's put back on the timetable.
+  if (run.state === "canceled") return null;
   const at = stops.findIndex((stop) => stop.station_id === run.station_id);
   if (run.state === null || run.state === "out_of_service" || at === -1) {
     return stops[0]
@@ -105,7 +108,7 @@ function ManualForm({
           ))}
         </select>
       </label>
-      {state !== "out_of_service" && (
+      {state !== "out_of_service" && state !== "canceled" && (
         <label className="flex flex-col gap-1 text-sm font-medium">
           Station
           <select

@@ -59,7 +59,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=100)),
-                ('direction', models.CharField(choices=[('northbound', 'Northbound (towards San Francisco)'), ('southbound', 'Southbound (towards Mountain View)')], max_length=20)),
+                ('direction', models.CharField(choices=[('northbound', 'Northbound (towards San Francisco)'), ('southbound', 'Southbound (towards San Jose)')], max_length=20)),
             ],
         ),
         migrations.CreateModel(

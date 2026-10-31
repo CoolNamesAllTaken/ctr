@@ -20,6 +20,8 @@ function describe(status: TrainStatus) {
     }
     case "out_of_service":
       return `${train} is out of service and off the live map.`;
+    case "canceled":
+      return `${train} is canceled today and off the live map.`;
     case null:
       return `${train} is following the timetable again.`;
   }

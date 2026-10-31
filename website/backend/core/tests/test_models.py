@@ -32,7 +32,7 @@ def test_transit_models():
     train = Train.objects.create(
         name="101", direction=Train.Direction.NORTHBOUND, traincar=car
     )
-    station = Station.objects.create(name="Mountain View", zone=1, position=0)
+    station = Station.objects.create(name="San Jose", zone=1, position=0)
     kiosk = Kiosk.objects.create(name="North platform", station=station)
     alert = Alert.objects.create(message="Ghosts on the tracks", train=train)
     arrival = Arrival.objects.create(train=train, station=station, time=time(20, 15))
@@ -58,4 +58,4 @@ def test_transit_models():
     assert rider.card.taps.get() == tap
     assert card.rider == rider
     assert list(station.kiosks.get().taps.all()) == [tap]
-    assert str(arrival) == "101 at Mountain View 20:15"
+    assert str(arrival) == "101 at San Jose 20:15"

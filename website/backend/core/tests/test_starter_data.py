@@ -11,7 +11,7 @@ def test_load_starter_data(client):
     assert response.status_code == 200
     assert response.json() == {"traincars": 2, "stations": 2, "kiosks": 4}
     assert list(Station.objects.values_list("name", flat=True)) == [
-        "Mountain View",
+        "San Jose",
         "San Francisco",
     ]
     for station in Station.objects.all():
