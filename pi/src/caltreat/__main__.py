@@ -1054,6 +1054,7 @@ from .config import (
 )
 from .intercom import Intercom
 from .sequencer import SIGNALS, Sequencer, signal_pattern
+from .sidecar import Sidecar, V12Engine, find_node
 
 SR = hw.SR
 BLOCK = 512  # ~11 ms per synthesized block
@@ -1624,6 +1625,11 @@ class AudioOut:
             self.hiss.trigger()
             self.air_at = None
 
+    def render_buses(self):
+        """Every speaker gets the same mono mix (the old engine has no per-speaker buses)."""
+        y = self.render()
+        return {"front": y, "inside": y, "rear": y}
+
     def render(self):
         with self.lock:
             t0 = self.t
@@ -1858,7 +1864,7 @@ class Router:
                 except Exception as e:  # never let a config surprise stop the engine
                     self.error = f"speaker plan: {e}"
                     print(f"caltreat: {self.error}", file=sys.stderr)
-            y = self.audio.render()
+            bus = self.audio.render_buses()  # {front, inside, rear}: each speaker's own mix
             t_block = self.audio.t - BLOCK
             ic = self.intercom.pull(BLOCK, t_block)
             duck_to = self.intercom.duck()
@@ -1870,7 +1876,7 @@ class Router:
             for key, p in self.plan.items():
                 frames = np.zeros((BLOCK, 2))
                 for sp, mask, gain in p["outs"]:
-                    sig = y * gain * (g if sp == "inside" else 1.0)
+                    sig = bus[sp] * gain * (g if sp == "inside" else 1.0)
                     if sp == "inside" and ic is not None:
                         sig = sig + ic
                     frames[:, 0] += sig * mask[0]
@@ -2340,7 +2346,20 @@ class BoardFinder:
 cfg = Config.load()
 if cfg.error:
     print(f"caltreat: {cfg.error}", file=sys.stderr)
-audio = AudioOut()
+# The sounds: the v12 engine (pi/engine, node sidecar) with its own mix per speaker; without node, the old numpy
+# engine (one mix on every speaker), flagged on the pages. CALTREAT_ENGINE=numpy forces the old one.
+ASSETS = cfg.folder / "assets"  # the door recording (deploy.sh copies it from the private ctr-assets repo, or upload)
+DOOR_FILES = ("doors_v10.wav", "doors_v10.json")
+node_path, node_why = find_node()
+if os.environ.get("CALTREAT_ENGINE") == "numpy" or not node_path:
+    sidecar = None
+    audio = AudioOut()
+    ENGINE_NOTE = "old sounds: " + ("CALTREAT_ENGINE=numpy" if node_path else node_why + " (README: Node.js)")
+    print(f"caltreat: {ENGINE_NOTE}", file=sys.stderr)
+else:
+    sidecar = Sidecar(node_path, warmup=os.environ.get("CALTREAT_ENGINE_WARMUP") != "0")
+    audio = V12Engine(sidecar)
+    ENGINE_NOTE = None
 intercom = Intercom(lambda: cfg.data["intercom"])
 intercom.keep_marks = bool(hw.FAKE_DIR)  # latency marks for the tests
 router = Router(audio, intercom, cfg)
@@ -2381,8 +2400,31 @@ io = Io(audio, cfg, finder, seq_status)
 
 def apply_config():
     audio.apply_mix(cfg.data["mix"])
+    if sidecar:
+        audio.apply_settings(cfg.data)
     audio.set_timing(cfg.data["timing"])
     finder.rename()
+
+
+def doors_installed():
+    return all((ASSETS / f).is_file() for f in DOOR_FILES)
+
+
+def load_doors():
+    """The door recording, if installed (else the engine plays its synth doors)."""
+    if sidecar and doors_installed():
+        audio.load_doors(ASSETS)
+
+
+def engine_status():
+    """(ok, text) for the pages: which sounds play."""
+    if not sidecar:
+        return False, "⚠ " + ENGINE_NOTE
+    if sidecar.ready:
+        return True, "v12"
+    if sidecar.error:
+        return False, "⚠ sound engine: " + sidecar.error
+    return False, "sound engine starting…"
 
 
 def apply_volumes():
@@ -2420,6 +2462,10 @@ class SeqDriver:
 
 seq_driver = SeqDriver()
 app.on_startup(apply_volumes)
+if sidecar:
+    app.on_startup(sidecar.start)
+    app.on_startup(load_doors)
+    app.on_shutdown(sidecar.stop)
 app.on_startup(router.start)
 app.on_startup(io.start)
 app.on_startup(finder.start)
@@ -2676,7 +2722,9 @@ def engineer_html():
 
 
 def errors():
-    errs = [f"Speaker {k}: {d.error}" for k, d in router.devices.items() if d.error]
+    ok, note = engine_status()
+    errs = [] if ok else [note]
+    errs += [f"Speaker {k}: {d.error}" for k, d in router.devices.items() if d.error]
     errs += [f"Relays: {io.error}" if io.error else "", router.error or "", cfg.error or ""]
     errs += [f"Board {b.name} ({b.host}): {b.error}" for b in finder.found if b.error and not b.connected]
     return " · ".join(e for e in errs if e)
@@ -2688,7 +2736,7 @@ def engine_state(who):
     if intercom.talking:
         talk = "me" if intercom.who == who else "busy"
     return {
-        "mph": round(audio.motor.speed * 79), "hz": round(audio.motor.speed * MOTOR["a_max"]),
+        "mph": round(audio.motor.speed * 79), "hz": round(getattr(audio, "inverter_hz", audio.motor.speed * MOTOR["a_max"])),
         "horn": audio.horn_on, "bell": audio.bell.on, "doors": audio.doors, "doorPos": round(audio.door_pos, 3),
         "thr": round(audio.motor.throttle * 100), "timing": audio.timing, "pattern": audio.busy_pattern,
         "seq": {"active": q["active"], "step": q["step"], "progress": round(q["progress"], 3),
