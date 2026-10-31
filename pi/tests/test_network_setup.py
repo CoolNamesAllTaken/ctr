@@ -239,6 +239,27 @@ def test_ap_stays_when_wifi_absent_and_restarts_when_down(helper):
     assert "modify" not in r.log and "nmcli connection up caltreat-ap" in r.log
 
 
+def test_restart_flag_restarts_a_running_ap_once(helper):
+    r = helper.run("--restart", script=helper.file("usr/local/sbin/caltreat-ap-channel"))
+    assert r.returncode == 0, r.stderr
+    assert "modify" not in r.log and r.log.count("nmcli connection up caltreat-ap") == 1
+    # a channel move already restarts it: not twice
+    helper.set("link", "Connected to 11:22:33:44:55:66 (on wlan0)\n")
+    helper.set("stachan", "11")
+    r = helper.run("--restart", script=helper.file("usr/local/sbin/caltreat-ap-channel"))
+    assert "802-11-wireless.channel 11" in r.log and r.log.count("nmcli connection up caltreat-ap") == 1
+
+
+def test_new_ap_password_restarts_the_running_ap(helper):
+    # The access point is up on the right channel; only its password changes. Loading the file alone would leave
+    # it running with the old password.
+    r = helper.run(AP_PASS="a-new-cab-pass", CALTREAT_SETUP_APPLY="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "psk=a-new-cab-pass\n" in helper.file(AP).read_text()
+    assert f"nmcli connection load {helper.file(AP)}" in r.log
+    assert r.log.count("nmcli connection up caltreat-ap") == 1
+
+
 def test_uap0_mac_when_wlan0_is_already_local(helper):
     (helper.sys / "class/net/uap0").rmdir()
     (helper.sys / "class/net/wlan0/address").write_text("de:a6:32:12:34:56\n")

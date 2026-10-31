@@ -207,6 +207,8 @@ characters). Passwords are kept only in NetworkManager's files on the Pi
 (`/etc/NetworkManager/system-connections/`, root only), never in the repo.
 Other names: `STA_SSID=…` (the Wi-Fi to join), `AP_SSID=…` (the Pi's own).
 To change a password, run it again with `AP_PASS=…` or `STA_PASS=…` set;
+Caltreat Cab restarts with its new password (phones on it rejoin). If it ever
+keeps the old one, restart it by hand: `sudo nmcli connection up caltreat-ap`.
 `--undo` removes it all. It also lets ordinary users open ports 80 and up
 (`net.ipv4.ip_unprivileged_port_start=80`), so the app serves the pages
 without `:8080`.
