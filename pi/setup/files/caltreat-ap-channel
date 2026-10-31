@@ -1,0 +1,62 @@
+#!/bin/bash
+# Keeps the Pi's access point on the channel of the Wi-Fi network it has joined. The built-in Wi-Fi has one
+# radio, so its access point (uap0) and its client (wlan0) must share a channel:
+#  - wlan0 connected: the access point moves to wlan0's channel (phones on it reconnect by themselves).
+#  - wlan0 not connected but its network is in the last scan: the access point moves there, so wlan0 can join.
+#  - neither: the access point stays where it is (on its last or the default channel).
+# It also brings the access point back up if it is down. Runs from the NetworkManager dispatcher (wlan0 up/down)
+# and from caltreat-ap-channel.timer (every minute). Installed by pi/setup/network.sh.
+set -euo pipefail
+# shellcheck source=/dev/null
+. "${CALTREAT_NETWORK_CONF:-/etc/caltreat/network.conf}"
+LOCK="${CALTREAT_LOCK:-/run/caltreat-ap-channel.lock}"
+exec 9>"$LOCK"
+flock -w 30 9
+
+log() { logger -t caltreat-ap "$*" 2>/dev/null || true; echo "$*"; }
+
+if [[ ! -e "${CALTREAT_SYS:-/sys}/class/net/$AP_IFACE" ]]; then
+  if [[ "$SHARED_RADIO" == 1 ]]; then
+    log "$AP_IFACE is missing, making it again"
+    "${CALTREAT_SBIN:-/usr/local/sbin}/caltreat-uap0" up
+    sleep 2
+  else
+    log "$AP_IFACE (the access point's Wi-Fi adapter) is not plugged in"
+    exit 0
+  fi
+fi
+
+target=""
+if [[ "$SHARED_RADIO" == 1 ]]; then
+  if iw dev "$STA_IFACE" link 2>/dev/null | grep -q '^Connected'; then
+    target="$(iw dev "$STA_IFACE" info | awk '$1 == "channel" { print $2; exit }')"
+  else
+    # Strongest access point of the network to join, from NetworkManager's last scan (SSID last: it may hold ':').
+    target="$(nmcli -t -f CHAN,SIGNAL,SSID device wifi list ifname "$STA_IFACE" --rescan no 2>/dev/null |
+      awk -v want="$STA_SSID" '{
+        chan = $0; sub(/:.*/, "", chan); rest = substr($0, length(chan) + 2)
+        sig = rest; sub(/:.*/, "", sig); ssid = substr(rest, length(sig) + 2); gsub(/\\:/, ":", ssid)
+        if (ssid == want && sig + 0 > best) { best = sig + 0; ch = chan }
+      } END { print ch }')"
+  fi
+fi
+
+current="$(nmcli -g 802-11-wireless.channel connection show "$AP_CON")"
+if [[ -n "$target" && "$target" != "$current" ]]; then
+  if ((target >= 52 && target <= 144)); then
+    log "$STA_SSID is on channel $target, a radar (DFS) channel the access point can't use; keeping channel $current." \
+      "Put $STA_SSID on 2.4 GHz (1-11) or 5 GHz channel 36-48 / 149-165."
+  else
+    band="bg"
+    ((target > 14)) && band=a
+    log "moving the access point from channel $current to $target (the channel of $STA_SSID)"
+    nmcli connection modify "$AP_CON" 802-11-wireless.band "$band" 802-11-wireless.channel "$target"
+    nmcli connection up "$AP_CON" >/dev/null
+    exit 0
+  fi
+fi
+
+if ! nmcli -t -f NAME connection show --active | grep -qxF "$AP_CON"; then
+  log "access point $AP_CON is down, starting it"
+  nmcli connection up "$AP_CON" >/dev/null || log "could not start $AP_CON (see: journalctl -u NetworkManager)"
+fi

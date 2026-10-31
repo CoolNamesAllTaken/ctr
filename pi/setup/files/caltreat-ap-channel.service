@@ -1,0 +1,8 @@
+# Installed by pi/setup/network.sh: keep the access point on the joined Wi-Fi's channel (see caltreat-ap-channel).
+[Unit]
+Description=Caltreat Wi-Fi access point channel check
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/caltreat-ap-channel
