@@ -1023,6 +1023,7 @@ import collections
 import contextlib
 import fcntl
 import json
+import math
 import os
 import re
 import socket
@@ -1053,6 +1054,7 @@ from .config import (
     diff,
     parse,
 )
+from .config import LEVEL_MAX, TRIM_MAX
 from .intercom import Intercom
 from .sequencer import SIGNALS, Sequencer, signal_pattern
 from .sidecar import Sidecar, V12Engine, find_node
@@ -1794,6 +1796,10 @@ class Router:
     def replan(self):
         self.dirty = True
 
+    def trim(self, key):
+        """A card's level-matching gain, dB (config trim_db, else its default)."""
+        return self.cfg.data.get("trim_db", {}).get(key, hw.default_trim(key))
+
     def set_test(self, device, ch):
         """Tone on (device key, channel) or off (None)."""
         self.test = (device, ch) if device else None
@@ -1809,7 +1815,7 @@ class Router:
             if card:
                 key = hw.JACK if card == hw.JACK_CARD else "usb:" + next(p for c, p in usb if c == card)
                 plan.setdefault(key, {"card": card, "outs": []})["outs"].append(
-                    (sp, _mask(s["ch"]), s["level"] / 100))
+                    (sp, _mask(s["ch"]), s["level"] / 100 * 10 ** (self.trim(key) / 20)))
             status[sp] = {"device": s["device"], "key": key, "card": card, "desc": desc,
                           "ok": None if s["device"] == "none" else card is not None}
         if self.test:
@@ -1912,7 +1918,7 @@ class Router:
                     frames[:, 1] += tone * test_mask[1]
                 dev = self.devices.get(key)
                 if dev:
-                    dev.push(frames, t_block)
+                    dev.push(limit(frames), t_block)
             # pace by the inside speaker's card (lowest latency for the intercom), else the jack, else any working
             inside = self.status.get("a_int", {}).get("key") or self.status.get("b_int", {}).get("key")
             cards = [self.devices.get(inside), self.devices.get(hw.JACK), *self.devices.values()]
@@ -1929,6 +1935,19 @@ class Router:
                     time.sleep(delay)
                 elif delay < -0.2:
                     clock = time.monotonic()
+
+
+LIMIT_KNEE = 0.8
+
+
+def limit(v):
+    """Soft limiter on a card's output: linear below LIMIT_KNEE of full scale, a tanh knee above it, never past full
+    scale. Speaker levels above 100 % and card trims lean on it instead of clipping."""
+    av = np.abs(v)
+    if av.max(initial=0.0) <= LIMIT_KNEE:
+        return v
+    r = 1 - LIMIT_KNEE
+    return np.where(av <= LIMIT_KNEE, v, np.sign(v) * (LIMIT_KNEE + r * np.tanh((av - LIMIT_KNEE) / r)))
 
 
 def _mask(ch):
@@ -2461,13 +2480,16 @@ def engine_status():
     return False, "sound engine starting…"
 
 
+def card_list(usb=None):
+    """[(device key, label, ALSA card)]: the jack and each USB card, by port."""
+    usb = hw.usb_outputs() if usb is None else usb
+    return [(hw.JACK, "3.5 mm jack", hw.JACK_CARD), *[(f"usb:{p}", f"USB {p} · {c}", c) for c, p in usb]]
+
+
 def apply_volumes():
-    """The ALSA card volumes kept in the config (unset ones are left alone)."""
-    usb = hw.usb_outputs()
-    for dev, pct in cfg.data["volumes"].items():
-        card, _ = hw.resolve(dev, usb)
-        if card:
-            hw.set_volume(pct, card, hw.mixer_control(card))
+    """Every card's ALSA volume to its dB in the config (unset: hw.DEFAULT_DB, full scale)."""
+    for dev, _, card in card_list():
+        hw.set_volume_db(cfg.data["card_db"].get(dev, hw.DEFAULT_DB), card, hw.mixer_control(card))
 
 
 cfg.on_change(apply_config)
@@ -2851,10 +2873,16 @@ def select(options, value, on_change, title=None, cls="sel"):
     return s
 
 
-def slider(label, lo, hi, value, on_change, title=None, unit="%", step=1):
+def _db(v):
+    return f"{float(v):+.1f}\u00a0dB".replace("-", "−")  # no break before dB
+
+
+def slider(label, lo, hi, value, on_change, title=None, unit="%", step=1, fmt=None):
+    """fmt: value -> the text shown (default "<value> <unit>")."""
+    fmt = fmt or (lambda v: f"{v} {unit}")
     with el("label", "lbl", title=title):
         ui.html(_esc(label), sanitize=False, tag="span")
-        out = ui.html(f"{value} {unit}", sanitize=False, tag="output")
+        out = ui.html(_esc(fmt(value)), sanitize=False, tag="output")
     r = el("input", "", type="range", min=lo, max=hi, step=step, value=value)
     r.props(f'aria-label="{_esc(label)}"')
 
@@ -2870,12 +2898,13 @@ def slider(label, lo, hi, value, on_change, title=None, unit="%", step=1):
         keep(v)
         v = float(v)
         v = int(v) if float(step).is_integer() else v
-        out.set_content(f"{v} {unit}")
+        out.set_content(_esc(fmt(v)))
         on_change(v)
 
     def moved(v):
         keep(v)
-        out.set_content(f"{v} {unit}")
+        v = float(v)
+        out.set_content(_esc(fmt(int(v) if float(step).is_integer() else v)))
 
     r.on("input", lambda e: moved(e.args), js_handler=f"(e) => {{ {keep_js}emit(e.target.value) }}")
     r.on("change", lambda e: changed(e.args), js_handler=f"(e) => {{ {keep_js}emit(e.target.value) }}")
@@ -3135,8 +3164,10 @@ async def settings(client):
                                        lambda v, sp=sp: (d["speakers"][sp].__setitem__("ch", v), save()),
                                        "Channel", "sel narrow")
                                 tb = sbtn("▶", lambda sp=sp: test_speaker(sp), "Test tone on this speaker")
-                            slider("Level", 0, 100, s["level"],
-                                   lambda v, sp=sp: (d["speakers"][sp].__setitem__("level", v), save()))
+                            slider("Level", 0, LEVEL_MAX, s["level"],
+                                   lambda v, sp=sp: (d["speakers"][sp].__setitem__("level", v), save()),
+                                   "Speaker level: 100 % = full scale, up to 400 % (+12 dB; loud parts are softly "
+                                   "limited)", fmt=lambda v: f"{v} %\n{_db(20 * math.log10(v / 100)) if v else 'off'}")
 
                             def show(st=st, tb=tb, sp=sp):
                                 r = router.status.get(sp, {})
@@ -3149,17 +3180,26 @@ async def settings(client):
                                     and router.test[1] == d["speakers"][sp]["ch"]
                                 tb.classes(replace="sbtn on" if on else "sbtn")
                             live.append(show)
-                el("h2", "", "Card volume", "The sound cards' own volume (ALSA mixer); kept in the settings")
+                el("h2", "", "Card volume", "Each sound card's own volume (ALSA mixer), dB; 0 dB = full scale. "
+                                            "Trim: extra gain in the app so the same level sounds the same on any "
+                                            "card (the 3.5 mm jack is about 9 dB quieter than a USB DAC: an "
+                                            "estimate, set it by ear)")
                 usb = hw.usb_outputs()
-                for dev, label, card in [("jack", "3.5 mm jack", hw.JACK_CARD),
-                                         *[(f"usb:{p}", f"USB {p} · {c}", c) for c, p in usb]]:
-                    cur = d["volumes"].get(dev, hw.get_volume(card, hw.mixer_control(card)))
+                for dev, label, card in card_list(usb):
+                    ctl = hw.mixer_control(card)
+                    lo, hi = hw.db_range(card, ctl)
+                    cur = min(hi, max(lo, d["card_db"].get(dev, hw.DEFAULT_DB)))
 
-                    def setv(v, dev=dev, card=card):
-                        hw.set_volume(v, card, hw.mixer_control(card))
-                        d["volumes"][dev] = v
+                    def setv(v, dev=dev, card=card, ctl=ctl, rng=(lo, hi)):
+                        d["card_db"][dev] = hw.set_volume_db(v, card, ctl, rng)
                         save()
-                    slider(label, 0, 100, cur, setv)
+                    slider(f"{label} volume", max(lo, -60), min(hi, 0), round(cur * 2) / 2, setv,
+                           f"ALSA {ctl}: {lo:g} to {hi:g} dB", unit="dB", step=0.5, fmt=_db)
+                    slider(f"{label} trim", -TRIM_MAX, TRIM_MAX,
+                           d["trim_db"].get(dev, hw.default_trim(dev)),
+                           lambda v, dev=dev: (d["trim_db"].__setitem__(dev, v), save()),
+                           f"Level matching gain for this card (default {hw.default_trim(dev):+g} dB)", unit="dB",
+                           step=0.5, fmt=_db)
                 el("h2", "", "Channel test", "440 Hz on one channel of one card, whatever is mapped to it")
                 if not usb:
                     el("div", "mapdia", "No USB sound cards found")

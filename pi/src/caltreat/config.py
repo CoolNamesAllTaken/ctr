@@ -18,7 +18,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from . import cars
+from . import cars, hw
 
 VERSION = 2  # 2: cars A / B (direction, four speakers, per-car lights)
 DIR = Path(os.environ.get("CALTREAT_CONFIG_DIR") or Path.home() / ".config" / "caltreat")
@@ -39,6 +39,8 @@ DOOR_SOUNDS = ("recorded", "synth")
 ENVS = ("dry", "approaching", "platform", "distance")
 TIMINGS = ("costume", "real")
 BOARD_PINS = 8
+LEVEL_MAX = 400  # speaker level, %: up to +12 dB (the Router's soft limiter keeps it from clipping)
+TRIM_MAX = 20  # card trim, +-dB
 RELAY_CHANNELS = 4
 
 # Light functions: what the engineer page and the sequences drive. Outputs (relay channels, board GP pins) are mapped
@@ -76,7 +78,8 @@ def defaults():
         "speakers": cars.default_speakers(),  # a_ext, a_int, b_ext, b_int: card + channel each
         "ditch": {"rate": 60, "hold_s": 15},  # flashes / min per lamp; s they keep flashing after the last horn
         "lights_on": True,  # master switch for the per-car lamps (engineer page)
-        "volumes": {},  # ALSA card volume % by device ("jack", "usb:1.2"); unset = leave as it is
+        "card_db": {},  # ALSA card volume, dB, by device ("jack", "usb:1.2"); unset = hw.DEFAULT_DB
+        "trim_db": {},  # app gain per card, dB (level matching); unset = hw.default_trim(device)
         "intercom": {"mic_gain_db": 0, "level": 80, "duck_db": -18, "timeout_s": 60},
         "functions": [{"id": i, "name": n, "kind": k, "symbol": s} for i, n, k, s in BUILTIN_FUNCTIONS]
         + cars.car_function_defs(),
@@ -151,11 +154,13 @@ def validate(c):
                 errs.append(f"speakers.{k}.device: not jack, none, usb#N or usb:<port>")
             if s.get("ch", "both") not in CHANNELS:
                 errs.append(f"speakers.{k}.ch: one of {', '.join(CHANNELS)}")
-            if not _num(s.get("level", 100), 0, 100):
-                errs.append(f"speakers.{k}.level: not 0-100")
-    vol = c.get("volumes", {})
-    if not isinstance(vol, dict) or any(not DEVICE_RE.match(str(k)) or not _num(x, 0, 100) for k, x in vol.items()):
-        errs.append("volumes: device -> 0-100")
+            if not _num(s.get("level", 100), 0, LEVEL_MAX):
+                errs.append(f"speakers.{k}.level: not 0-{LEVEL_MAX}")
+    for key, lo, hi, what in (("volumes", 0, 100, "%"), ("card_db", -110, 10, "dB"), ("trim_db", -TRIM_MAX, TRIM_MAX,
+                                                                                    "dB")):  # volumes: before v2.1
+        vol = c.get(key, {})
+        if not isinstance(vol, dict) or any(not DEVICE_RE.match(str(k)) or not _num(x, lo, hi) for k, x in vol.items()):
+            errs.append(f"{key}: device -> {lo} to {hi} {what}")
     ic = c.get("intercom", {})
     if not isinstance(ic, dict):
         errs.append("intercom: not an object")
@@ -229,6 +234,7 @@ def complete(c):
     out = copy.deepcopy(c)
     if out.get("version", 1) < 2:
         migrate_v1(out)
+    migrate_volumes(out)
     for k, v in d.items():
         if k not in out:
             out[k] = copy.deepcopy(v)
@@ -270,6 +276,15 @@ def migrate_v1(c):
             c["functions"] = [f for f in c["functions"] if not (isinstance(f, dict) and f.get("id") in
                                                                 ("head", "markers") and f["id"] not in used)]
     c["version"] = 2
+
+
+def migrate_volumes(c):
+    """Card volumes as amixer -M % ("volumes") -> the dB they were at ("card_db"), so each card stays where it was."""
+    vol = c.pop("volumes", None)
+    if isinstance(vol, dict):
+        db = c.setdefault("card_db", {})
+        for dev, pct in vol.items():
+            db.setdefault(dev, hw.pct_to_db(pct, hw.JACK_DB if dev == hw.JACK else hw.USB_DB))
 
 
 def parse(text):
