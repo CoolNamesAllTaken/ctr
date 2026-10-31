@@ -1109,7 +1109,7 @@ SQUEAL = dict(f=2150, wobble=125, dur=3.5)
 SHOW = ("show", "Show", "o o – o –", "Horn show: a fun pattern for the costume, not a railroad signal")
 SHOW_PATTERN = [(0, 0.35), (0.6, 0.35), (1.2, 1.4), (3.0, 0.35), (3.6, 2.2)]
 HORN_SIGNALS = [*SIGNALS, SHOW]
-BUILTIN_IDS = {f[0] for f in BUILTIN_FUNCTIONS}
+BUILTIN_IDS = {f[0] for f in BUILTIN_FUNCTIONS} | {f[0] for f in cars.CAR_FUNCTIONS}  # not deletable
 
 
 def db(d):
