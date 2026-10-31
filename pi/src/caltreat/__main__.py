@@ -3103,10 +3103,12 @@ async def settings(client):
         save()
 
     body()
-    shown_boards = [sorted(b.uid for b in finder.found), len(cfg.data["boards"])]
+    # id(cfg.data): a restore or reset (from any browser) swaps in a new dict; the controls here must not keep
+    # editing the old one, or their changes are silently lost
+    shown_boards = [sorted(b.uid for b in finder.found), len(cfg.data["boards"]), id(cfg.data)]
 
     def tick():
-        now = [sorted(b.uid for b in finder.found), len(cfg.data["boards"])]
+        now = [sorted(b.uid for b in finder.found), len(cfg.data["boards"]), id(cfg.data)]
         if now != shown_boards:
             shown_boards[:] = now
             body.refresh()
