@@ -9,6 +9,7 @@ export default function HowItWorksPage() {
     <InfoPage
       title="How it works"
       intro="Your fare depends on how many zones you travel through. Tapping on and off lets us charge you for exactly that."
+      drawing="a rider tapping on at the platform kiosk"
     >
       <section>
         <h2>Tap on before you board</h2>
