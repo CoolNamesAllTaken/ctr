@@ -1045,6 +1045,8 @@ from .config import (
     BOARD_PINS,
     BUILTIN_FUNCTIONS,
     CHANNELS,
+    LAYER_KEYS,
+    LAYER_MAX,
     RELAY_CHANNELS,
     SPEAKERS,
     Config,
@@ -2894,6 +2896,113 @@ def save():
     cfg.changed(0.5)
 
 
+MIX12_SLIDERS = (  # (config key = v12 intensity key, label, tooltip), as the v12 page's Mix & settings
+    ("master", "Master", "All train sounds"), ("horn", "Horn", ""), ("breath", "Horn breath", "Air under a held note"),
+    ("bell", "Bell", ""), ("motor", "Motor whine", ""),
+    ("door", "Doors", "The door recording (or the synth door signals)"),
+    ("doorMech", "Door mechanics", "Synth doors only: thumps, push-out, whine, slide, seal, lock"),
+    ("doorLeak", "Door leak", "Inside: how much louder outside sounds get while the doors are open"),
+    ("hiss", "Air & brakes", ""), ("sand", "Sander", ""),
+    ("interior", "Interior ambient", "Old HVAC / rolling ambient (inside); the Layers below are the new ones"),
+)
+LAYER_LABELS = {"hvac": ("≈", "HVAC", "Idle hum: inside the cabin air conditioning; outside the roof fans and converter"),
+                "traction": ("⊛", "Traction", "Outside: motor growl, blowers while powering or braking"),
+                "rolling": ("∼", "Rolling", "Wheel/rail noise, grows with speed"),
+                "rumble": ("▁", "Rumble", "Rolling below 250 Hz (inside: body boom)"),
+                "clatter": ("⁞", "Clatter", "Switch and crossing clatter"),
+                "whine": ("⌁", "Whine", "Inverter / motor whine (level = Mix: Motor whine)")}
+ENV_LABELS = {"dry": "Dry (on the train)", "approaching": "Approaching train (Doppler)", "platform": "Platform",
+              "distance": "Distance (~150 m)"}
+
+
+def sound_section(d, pick_doors, refresh):
+    """Settings: the v12 engine's sound options. pick_doors: opens the page's door-file picker; refresh: re-render."""
+    with el("section", "ctl set"):
+        el("h2", "", "Sound", "The v12 engine's options (as the v12 page's Layers and Mix & settings)")
+        with el("div", "rows"):
+            for k in LAYER_KEYS:
+                sym, lab, tip = LAYER_LABELS[k]
+                lay = d["layers"][k]
+                with el("div", "srow"):
+                    el("div", "nm", f"{sym} {lab}", tip)
+                    with el("div", "ctlz"):
+                        for mode, txt, mtip in (("auto", "A", "Automatic (follows the train)"), ("on", "●", "Always on"),
+                                                ("off", "○", "Muted")):
+                            sbtn(txt, lambda k=k, mode=mode: (d["layers"][k].__setitem__("mode", mode), save(),
+                                                               refresh()), mtip,
+                                 "on" if lay["mode"] == mode else "")
+                if LAYER_MAX[k] > 100 or k != "whine":
+                    slider(f"{lab} level", 0, LAYER_MAX[k], lay["v"],
+                           lambda v, k=k: (d["layers"][k].__setitem__("v", v), save()))
+            with el("div", "srow"):
+                el("div", "nm", "∴ Sander", "Sander after STOP: inside the car only, always, or never")
+                with el("div", "ctlz"):
+                    select([("inside", "Inside only"), ("always", "Always"), ("off", "Never")], d["auto_sand"],
+                           lambda v: (d.__setitem__("auto_sand", v), save()), "Sander after STOP")
+            with el("div", "srow"):
+                ok = doors_installed()
+                el("div", "nm", "▯ Doors", "The door recording is not in the repo (it isn't ours to publish): "
+                                          "deploy.sh copies it from the private ctr-assets repo, or upload "
+                                          "doors_v10.wav + doors_v10.json (or a zip of both) here")
+                with el("div", "ctlz"):
+                    el("span", "st" + ("" if ok else " bad"), "✓ recorded" if ok else "synth (no recording)",
+                       f"Files in {ASSETS}")
+                    select([("recorded", "Recorded"), ("synth", "Synth")], d["door_sound"],
+                           lambda v: (d.__setitem__("door_sound", v), save()), "Door sound (Recorded needs the files)")
+                    sbtn("⤒", pick_doors, "Upload doors_v10.wav + doors_v10.json (or a .zip of both)")
+            for bus in ("front", "rear"):
+                with el("div", "srow"):
+                    el("div", "nm", f"{bus.title()} env", "What the outside speaker sounds like: on the train (dry), "
+                                                          "a train approaching (Doppler), at a platform, far away")
+                    with el("div", "ctlz"):
+                        select(list(ENV_LABELS.items()), d["env"][bus],
+                               lambda v, bus=bus: (d["env"].__setitem__(bus, v), save()), "Outside sound")
+
+
+def save_door_file(name, data):
+    """An uploaded door file -> ASSETS (only doors_v10.wav / doors_v10.json, or those two from a zip). Returns a
+    message."""
+    import io as _io
+    import zipfile
+    low = name.lower()
+    files = {}
+    if low.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(_io.BytesIO(data)) as z:
+                for zi in z.infolist():
+                    base = zi.filename.rsplit("/", 1)[-1].lower()
+                    if base.endswith((".wav", ".json")) and zi.file_size < 20_000_000:
+                        files[base] = z.read(zi)
+        except zipfile.BadZipFile:
+            return "✗ not a zip"
+    else:
+        files[low.rsplit("/", 1)[-1]] = data
+    saved = []
+    for base, blob in files.items():
+        if base.endswith(".wav"):
+            if blob[:4] != b"RIFF" or blob[8:12] != b"WAVE":
+                return f"✗ {base}: not a WAV"
+            target = "doors_v10.wav"
+        elif base.endswith(".json"):
+            try:
+                meta = json.loads(blob)
+                assert isinstance(meta, dict) and "sr" in meta
+            except (ValueError, AssertionError):
+                return f"✗ {base}: not the doors' JSON"
+            target = "doors_v10.json"
+        elif base.endswith(".flac"):
+            return "✗ FLAC can't be read here: upload the .wav"
+        else:
+            continue
+        ASSETS.mkdir(parents=True, exist_ok=True)
+        (ASSETS / target).write_bytes(blob)
+        saved.append(target)
+    if not saved:
+        return "✗ no .wav / .json found"
+    load_doors()
+    return "✓ " + ", ".join(saved)
+
+
 @ui.page("/settings")
 async def settings(client):
     page_head("Caltreat settings")
@@ -2938,6 +3047,14 @@ async def settings(client):
     upload = ui.upload(on_upload=on_upload, auto_upload=True, max_file_size=1_000_000).props('accept=".json"') \
         .classes("hidden")
 
+    async def on_door_upload(e):
+        msg = await run.io_bound(save_door_file, e.file.name, await e.file.read())
+        ui.notify(msg, type="positive" if msg.startswith("✓") else "warning")
+        body.refresh()
+
+    door_upload = ui.upload(on_upload=on_door_upload, auto_upload=True, multiple=True, max_file_size=20_000_000) \
+        .props('accept=".wav,.json,.zip,.flac"').classes("hidden")
+
     @ui.refreshable
     def body():
         live.clear()
@@ -2956,13 +3073,20 @@ async def settings(client):
 
             # --- mix ---
             with el("section", "ctl set"):
-                el("h2", "", "Mix", "Levels of each sound, % of the engine's default; the card volumes are under "
-                                    "Speakers")
-                for k, lab, tip in (("master", "Master", "All train sounds"), ("horn", "Horn", ""),
-                                    ("bell", "Bell", ""), ("motor", "Motor whine", ""),
-                                    ("doors", "Door tone", ""), ("air", "Air", "Brake release hiss"),
-                                    ("brakes", "Brake squeal", "")):
-                    slider(lab, 0, 150, d["mix"][k], lambda v, k=k: (d["mix"].__setitem__(k, v), save()), tip or None)
+                if sidecar:
+                    el("h2", "", "Mix", "The v12 page's Mix sliders (same defaults); the card volumes are under "
+                                        "Speakers")
+                    for k, lab, tip in MIX12_SLIDERS:
+                        slider(lab, 0, 100, d["mix12"][k], lambda v, k=k: (d["mix12"].__setitem__(k, v), save()),
+                               tip or None)
+                else:
+                    el("h2", "", "Mix ⚠", "Old sound engine (node missing): levels, % of its default")
+                    for k, lab, tip in (("master", "Master", "All train sounds"), ("horn", "Horn", ""),
+                                        ("bell", "Bell", ""), ("motor", "Motor whine", ""),
+                                        ("doors", "Door tone", ""), ("air", "Air", "Brake release hiss"),
+                                        ("brakes", "Brake squeal", "")):
+                        slider(lab, 0, 150, d["mix"][k], lambda v, k=k: (d["mix"].__setitem__(k, v), save()),
+                               tip or None)
                 with el("div", "srow"):
                     el("div", "nm", "Timing", "Show: costume timing (14 s to full power, short blasts). Real: the "
                                               "railroad's (about 60 s, 2.5 s longs)")
@@ -2977,6 +3101,10 @@ async def settings(client):
                         for v, lab in ((True, "Bell + – –"), (False, "Bell only")):
                             sbtn(lab, lambda v=v: (d.__setitem__("depart_horn", v), save(), body.refresh()), None,
                                  "on" if d["depart_horn"] == v else "")
+
+            # --- v12 sound: layers, sander, doors, outside environments ---
+            if sidecar:
+                sound_section(d, lambda: door_upload.run_method("pickFiles"), body.refresh)
 
             # --- speakers ---
             with el("section", "ctl set"):
