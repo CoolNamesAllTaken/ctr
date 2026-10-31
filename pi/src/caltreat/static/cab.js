@@ -29,7 +29,7 @@ window.ct = (() => {
   function setThr(v) { $('throttle').value = v; $('thrOut').textContent = v + ' %'; }
 
   // ---------- push-to-talk ----------
-  const IC = { on: false, ws: null, ctx: null, src: null, node: null, stream: null, seq: 0, idle: null, queue: [], ready: null, gen: 0 };
+  const IC = { on: false, ws: null, ctx: null, src: null, node: null, stream: null, seq: 0, idle: null, retry: null, queue: [], ready: null, gen: 0 };
   // Microphone + worklet, set up once and shared: a press while an earlier one is still starting waits for the same
   // setup (two setups at once made the second press's worklet node fail and drop the talk).
   function micReady() {
@@ -58,6 +58,26 @@ window.ct = (() => {
     else b.title = 'Hold to talk on the inside speakers (T)';
   }
   function level(v) { const b = $('talk'); if (b) b.style.setProperty('--lvl', Math.min(1, v * 4).toFixed(3)); }
+  // One WebSocket per page, opened when the page loads (secure pages only) and reopened if it drops, so a press
+  // only sends {talk: true} and the frames: no connection setup clips the first words.
+  function wsOpen() {
+    if (!window.isSecureContext || document.visibilityState === 'hidden') return null;
+    if (IC.ws && IC.ws.readyState <= 1) return IC.ws;
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/intercom/ws?c=' + encodeURIComponent(cfg.client || ''));
+    ws.binaryType = 'arraybuffer'; IC.ws = ws;
+    ws.onopen = () => { if (IC.on && IC.node && !IC.live) ws.send('{"talk":true}'); };
+    ws.onmessage = (e) => {
+      let m = {}; try { m = JSON.parse(e.data); } catch (_) {}
+      if (m.ok && IC.on) { IC.live = true; for (const b of IC.queue) ws.send(b); IC.queue = []; talkPaint(); }
+      else if (m.busy || m.stop) talkUp();
+    };
+    ws.onclose = () => {
+      if (IC.ws !== ws) return;
+      IC.ws = null; if (IC.on) talkUp();
+      clearTimeout(IC.retry); IC.retry = setTimeout(wsOpen, 1500);
+    };
+    return ws;
+  }
   async function talkDown() {
     if (IC.on) return;
     if (!window.isSecureContext) { if (cfg.https) location.href = cfg.https; return; }
@@ -65,6 +85,7 @@ window.ct = (() => {
     IC.on = true; IC.live = false; IC.queue = []; clearTimeout(IC.idle); talkPaint();
     const gen = ++IC.gen;
     try {
+      const ws = wsOpen();
       await micReady();
       await IC.ctx.resume();
       if (!IC.on || gen !== IC.gen) return; // released (or released and pressed again) while starting
@@ -73,18 +94,11 @@ window.ct = (() => {
         if (IC.node !== node) return;
         const pcm = new Int16Array(ev.data.pcm), buf = new ArrayBuffer(12 + pcm.byteLength), dv = new DataView(buf);
         dv.setUint32(0, IC.seq++, true); dv.setFloat64(4, Date.now() - 10, true); new Int16Array(buf, 12).set(pcm); // capture time of the frame's first sample
-        if (IC.live && IC.ws && IC.ws.readyState === 1) IC.ws.send(buf); else if (IC.queue.length < 50) IC.queue.push(buf);
+        if (IC.live && IC.ws && IC.ws.readyState === 1) IC.ws.send(buf); else if (IC.queue.length < 100) IC.queue.push(buf);
         level(ev.data.rms);
       };
       IC.src.connect(node); node.connect(IC.sink);
-      const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/intercom/ws?c=' + encodeURIComponent(cfg.client || ''));
-      ws.binaryType = 'arraybuffer'; IC.ws = ws;
-      ws.onmessage = (e) => {
-        let m = {}; try { m = JSON.parse(e.data); } catch (_) {}
-        if (m.ok) { IC.live = true; for (const b of IC.queue) ws.send(b); IC.queue = []; talkPaint(); }
-        else if (m.busy || m.stop) talkUp();
-      };
-      ws.onclose = () => { if (IC.ws === ws) talkUp(); };
+      if (ws && ws.readyState === 1) ws.send('{"talk":true}'); // else onopen sends it
     } catch (err) {
       if (gen !== IC.gen) return; // a later press owns the button now
       const b = $('talk'); if (b) b.title = 'Microphone: ' + (err && err.message || err);
@@ -94,9 +108,10 @@ window.ct = (() => {
   }
   function talkUp() {
     if (!IC.on) return;
+    const was = IC.node !== null;
     IC.on = false; IC.live = false; IC.queue = []; IC.gen++;
     if (IC.node) { try { IC.node.port.postMessage('stop'); IC.src.disconnect(IC.node); IC.node.disconnect(); } catch (_) {} IC.node = null; }
-    if (IC.ws) { const ws = IC.ws; IC.ws = null; try { ws.close(); } catch (_) {} }
+    if (was && IC.ws && IC.ws.readyState === 1) IC.ws.send('{"talk":false}'); // the socket stays open
     level(0); talkPaint();
     clearTimeout(IC.idle); // keep the microphone open a little while for the next press, then let it go
     IC.idle = setTimeout(() => { if (!IC.on) micClose(); }, 20000);
@@ -161,7 +176,8 @@ window.ct = (() => {
     talk.addEventListener('pointerdown', (e) => { e.preventDefault(); try { talk.setPointerCapture(e.pointerId); } catch (_) {} talkDown(); });
     for (const ev of ['pointerup', 'pointercancel', 'pointerleave', 'lostpointercapture']) talk.addEventListener(ev, talkUp);
     talk.addEventListener('contextmenu', (e) => e.preventDefault());
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') { hornUp(); doorUp(); talkUp(); } });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState !== 'visible') { hornUp(); doorUp(); talkUp(); } else wsOpen(); });
+    wsOpen();
     window.addEventListener('blur', () => { hornUp(); doorUp(); });
     // keys (desktop)
     const held = {};

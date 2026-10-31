@@ -18,7 +18,7 @@
 # import time
 
 # import numpy as np
-# from nicegui import app, ui
+# from nicegui import app, run, ui
 
 # SR = 48000
 # BLOCK = 512  # ~11 ms per synthesized block
@@ -1038,7 +1038,7 @@ from pathlib import Path
 import numpy as np
 import uvicorn
 from fastapi import WebSocket, WebSocketDisconnect
-from nicegui import app, ui
+from nicegui import app, run, ui
 
 from . import hw, lcfw, lcfw_ui
 from .config import (
@@ -1650,6 +1650,7 @@ class Device:
     cards) are dropped, so a slow or missing card never holds up the others."""
 
     QUEUE = 1  # blocks kept ahead (~11 ms), on top of the pipe (~21 ms) and the ALSA buffer
+    STALL_KILL = 2.0  # s a stalled card may stay stuck before its player is restarted
 
     def __init__(self, key, card):
         self.key, self.card = key, card  # config device ("jack", "usb:1.2"), ALSA card id
@@ -1658,6 +1659,8 @@ class Device:
         self.running = True
         self.ok = False
         self.error = None
+        self.proc = None
+        self.stall_since = 0.0
         self.underruns = 0
         self.dropped = 0
         self.blocks = 0  # blocks written to the current player
@@ -1683,6 +1686,21 @@ class Device:
         with self.cond:
             self.cond.notify_all()
 
+    def stalled(self):
+        """The pacing loop waited 100 ms and this card took nothing. It no longer paces (ok = False, the engine
+        keeps time on the clock or another card); if it is still stuck after STALL_KILL s, its player is killed
+        so the restart loop opens the card again."""
+        now = time.monotonic()
+        if self.ok:
+            self.ok, self.error = False, "sound card stopped taking audio"
+            self.stall_since = now
+            print(f"caltreat: sound card {self.key} ({self.card}) stalled", file=sys.stderr)
+        elif now - self.stall_since > self.STALL_KILL and self.proc is not None:
+            print(f"caltreat: restarting the player for {self.key}", file=sys.stderr)
+            with contextlib.suppress(OSError):
+                self.proc.kill()
+            self.stall_since = now
+
     def _pop(self):
         with self.cond:
             self.cond.wait_for(lambda: self.q or not self.running, 0.03)
@@ -1700,7 +1718,7 @@ class Device:
         name = self.key.replace(":", "-").replace("#", "")
         while self.running:
             try:
-                proc = hw.player(self.card, 2, name)
+                proc = self.proc = hw.player(self.card, 2, name)
             except OSError as e:
                 self.ok, self.error = False, str(e)
                 time.sleep(2)
@@ -1813,6 +1831,8 @@ class Router:
             self.thread.join(timeout=2)
         for d in self.devices.values():
             d.stop()
+        for d in self.devices.values():  # let each player drain and exit
+            d.thread.join(timeout=2)
 
     def _tone(self):
         on = self.test is not None and getattr(self, "test_key", None)
@@ -1861,11 +1881,14 @@ class Router:
                 dev = self.devices.get(key)
                 if dev:
                     dev.push(frames, t_block)
-            # pace by the inside speaker's card (lowest latency for the intercom), else the jack, else any
+            # pace by the inside speaker's card (lowest latency for the intercom), else the jack, else any working
             inside = self.status.get("inside", {}).get("key")
-            master = self.devices.get(inside) or self.devices.get(hw.JACK) or next(iter(self.devices.values()), None)
-            if master is not None and master.ok:
-                master.wait_room(0.1)
+            cards = [self.devices.get(inside), self.devices.get(hw.JACK), *self.devices.values()]
+            master = next((d for d in cards if d is not None and d.ok), None)
+            if master is not None and master.wait_room(0.1):
+                clock = time.monotonic()
+            elif master is not None:  # the card stopped taking audio without its player exiting: don't follow it
+                master.stalled()
                 clock = time.monotonic()
             else:  # no working card: keep time on the clock
                 clock += BLOCK / SR
@@ -2233,20 +2256,26 @@ class BoardFinder:
 
     def _name(self, uid):
         """The board's name from the config; a new board gets the next free letter (saved)."""
-        boards = self.cfg.data["boards"]
-        if uid not in boards:
-            used = {b["name"] for b in boards.values()}
-            name = next((c for c in map(chr, range(ord("A"), ord("Z") + 1)) if c not in used), uid[-6:])
-            boards[uid] = board_defaults(name)
-            self.cfg.save()
-        return boards[uid]["name"]
+        with self.cfg.lock:  # the pages edit cfg.data on the loop; a save snapshots it from another thread
+            boards = self.cfg.data["boards"]
+            new = uid not in boards
+            if new:
+                used = {b["name"] for b in boards.values()}
+                name = next((c for c in map(chr, range(ord("A"), ord("Z") + 1)) if c not in used), uid[-6:])
+                boards[uid] = board_defaults(name)
+            name = boards[uid]["name"]
+        if new:
+            self.cfg.save()  # this thread, not the loop
+        return name
 
     def rename(self):
         """After a config change: board names may have changed."""
+        with self.cfg.lock:
+            names = {uid: b["name"] for uid, b in self.cfg.data["boards"].items()}
         with self.lock:
             for uid, b in self.boards.items():
-                if uid in self.cfg.data["boards"]:
-                    b.name = self.cfg.data["boards"][uid]["name"]
+                if uid in names:
+                    b.name = names[uid]
 
     def _probe(self, host):
         """The chip ID of the lighting controller at host, or None."""
@@ -2399,32 +2428,33 @@ app.on_shutdown(router.stop)
 app.on_shutdown(io.stop)
 app.on_shutdown(finder.stop)
 app.on_shutdown(seq_driver.stop)
+app.on_shutdown(cfg.flush)  # a settings change still waiting to be written
 app.add_static_files("/static", STATIC)
 
 
 # ---------- intercom WebSocket ----------
 @app.websocket("/intercom/ws")
 async def intercom_ws(ws: WebSocket):
-    """One talker: {"ok": true} then binary frames (see intercom.py) until the page closes it; {"busy": true} if
-    someone else talks; {"stop": "timeout" | "stale"} when the server ends it."""
+    """One per engineer page, kept open between presses (so starting to talk costs no connection setup). The page
+    sends {"talk": true} (answer {"ok": true}, or {"busy": true} if someone else talks), then binary frames (see
+    intercom.py), then {"talk": false}. The server sends {"stop": "timeout" | "stale"} when it ends a talk itself.
+    Closing the socket ends a talk too."""
     await ws.accept()
     token = uuid.uuid4().hex
-    if not intercom.claim(token, ws.query_params.get("c")):
-        await ws.send_text(json.dumps({"busy": True}))
-        await ws.close()
-        return
-    await ws.send_text(json.dumps({"ok": True}))
+    who = ws.query_params.get("c")
+
+    async def send(m):
+        with contextlib.suppress(Exception):
+            await ws.send_text(json.dumps(m))
 
     async def watchdog():
-        while intercom.talker == token:
+        while True:
             await asyncio.sleep(0.25)
-            why = intercom.expired()
-            if why and intercom.talker == token:
-                intercom.release(token)
-                with contextlib.suppress(Exception):
-                    await ws.send_text(json.dumps({"stop": why}))
-                    await ws.close()
-                return
+            if intercom.talker == token:
+                why = intercom.expired()
+                if why:
+                    intercom.release(token)
+                    await send({"stop": why})
 
     dog = asyncio.create_task(watchdog())
     try:
@@ -2432,8 +2462,17 @@ async def intercom_ws(ws: WebSocket):
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":
                 break
-            if msg.get("bytes") and not intercom.feed(token, msg["bytes"]):
-                break
+            if msg.get("bytes"):
+                intercom.feed(token, msg["bytes"])  # frames after a release or a stop are ignored
+            elif msg.get("text"):
+                try:
+                    talk = json.loads(msg["text"]).get("talk")
+                except (ValueError, AttributeError):
+                    continue
+                if talk is True:
+                    await send({"ok": True} if intercom.claim(token, who) else {"busy": True})
+                elif talk is False:
+                    intercom.release(token)
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
@@ -2497,28 +2536,36 @@ class _QuietServer(uvicorn.Server):
         yield
 
 
-https = {"server": None, "on": False}
+https = {"server": None, "stopping": False}
 
 
 async def start_https():
-    if HTTPS_PORT <= 0 or not ensure_cert():
+    """HTTPS beside NiceGUI's http server. If it can't start (e.g. the port is still taken after a restart) it tries
+    again, 2 s later, then 4, 8, ... up to every 60 s; plain http keeps working meanwhile."""
+    if HTTPS_PORT <= 0 or not await run.io_bound(ensure_cert):
         return
-    config = uvicorn.Config(app, host="0.0.0.0", port=HTTPS_PORT, ssl_certfile=str(CERT), ssl_keyfile=str(KEY),
-                            lifespan="off", log_level="warning", ws="wsproto")
-    server = https["server"] = _QuietServer(config)
-    https["on"] = True
 
     async def serve():
-        try:
-            await server.serve()
-        except (SystemExit, OSError) as e:  # e.g. the port is taken: plain http keeps working
-            print(f"caltreat: HTTPS on port {HTTPS_PORT} failed ({e})", file=sys.stderr)
-        https["on"] = False
+        delay = 2.0
+        while not https["stopping"]:
+            config = uvicorn.Config(app, host="0.0.0.0", port=HTTPS_PORT, ssl_certfile=str(CERT),
+                                    ssl_keyfile=str(KEY), lifespan="off", log_level="warning", ws="wsproto")
+            server = https["server"] = _QuietServer(config)
+            try:
+                await server.serve()
+            except (SystemExit, OSError) as e:
+                print(f"caltreat: HTTPS on port {HTTPS_PORT} failed ({e})", file=sys.stderr)
+            if https["stopping"]:
+                break
+            print(f"caltreat: retrying HTTPS in {delay:.0f} s", file=sys.stderr)
+            await asyncio.sleep(delay)
+            delay = min(60.0, delay * 2)
 
     https["task"] = asyncio.get_running_loop().create_task(serve())
 
 
 def stop_https():
+    https["stopping"] = True
     if https["server"]:
         https["server"].should_exit = True
 
@@ -2532,7 +2579,8 @@ def https_url(client):
         host = client.request.url.hostname or "caltreat.local"
     except AttributeError:
         host = "caltreat.local"
-    return f"https://{host}:{HTTPS_PORT}/" if https["on"] else ""
+    up = https["server"] is not None and https["server"].started
+    return f"https://{host}:{HTTPS_PORT}/" if up else ""
 
 
 # ---------- pages ----------
@@ -2653,7 +2701,7 @@ def engine_state(who):
 def set_timing(mode):
     if mode in ("costume", "real") and cfg.data["timing"] != mode:
         cfg.data["timing"] = mode
-        cfg.save()
+        cfg.changed(0)
 
 
 def act(who, a, v):
@@ -2794,7 +2842,8 @@ KIND_LABEL = {"manual": "manual (engineer page)", "doors": "doors open / moving"
 
 
 def save():
-    cfg.save()
+    """A settings change: applied now, written to disk ~0.5 s after the last one, off the asyncio loop."""
+    cfg.changed(0.5)
 
 
 @ui.page("/settings")
@@ -2825,7 +2874,7 @@ async def settings(client):
                 for x in changes[:200] or ["(nothing changes)"]:
                     el("li", "", _esc(x))
             with el("div", "ctlz"):
-                sbtn("✓ Apply", lambda: (cfg.replace(new), apply_volumes(), d.close(), body.refresh()),
+                sbtn("✓ Apply", lambda: (cfg.replace(new, soon=True), apply_volumes(), d.close(), body.refresh()),
                      "Apply and save", "on")
                 sbtn("✕", d.close, "Cancel")
         d.open()
@@ -2834,7 +2883,7 @@ async def settings(client):
         with ui.dialog() as d, el("div", "dlg"):
             el("b", "", "Reset every setting to its default? Board names stay.")
             with el("div", "ctlz"):
-                sbtn("⟲ Reset", lambda: (cfg.reset(), d.close(), body.refresh()), "Reset", "warn")
+                sbtn("⟲ Reset", lambda: (cfg.reset(soon=True), d.close(), body.refresh()), "Reset", "warn")
                 sbtn("✕", d.close, "Cancel")
         d.open()
 

@@ -78,9 +78,18 @@ def test_jitter_buffer_waits_then_plays_and_grows():
     assert np.any(ic.pull(480))
 
 
+def test_start_burst_is_kept():
+    ic = Intercom(settings())
+    ic.claim("a")
+    for f in frames(np.full(8000, 0.1)):  # 0.5 s queued by the page while the talk started, arriving at once
+        ic.feed("a", f)
+    assert ic.stats["dropped_ms"] == 0 and len(ic.buf) == 8000  # the first words are not cut
+
+
 def test_overfull_buffer_is_cut_back():
     ic = Intercom(settings())
     ic.claim("a")
+    ic.started -= icm.SETTLE + 0.5  # steady state: talking for a while
     for f in frames(np.full(16000, 0.1)):  # 1 s at once (a stalled network catching up)
         ic.feed("a", f)
     assert ic.stats["dropped_ms"] > 800
