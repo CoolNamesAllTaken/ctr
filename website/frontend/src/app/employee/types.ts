@@ -111,3 +111,45 @@ export type TrainStatus = TrainRun & {
   station_name: string | null;
   updated_at: string | null;
 };
+
+// The Live tab; see backend/core/dashboard.py.
+
+export type RiderRef = {
+  card_uid: string;
+  // Null for a card with no rider.
+  name: string | null;
+  costume: string;
+};
+
+export type TapBucket = {
+  start: string;
+  tap_ons: number;
+  tap_offs: number;
+};
+
+export type KioskActivity = {
+  kiosk_id: string;
+  kiosk_name: string;
+  // Null for a kiosk with no station (out of service).
+  station_name: string | null;
+  tap_ons: number;
+  tap_offs: number;
+  buckets: TapBucket[];
+};
+
+export type Dashboard = {
+  as_of: string;
+  taps: number;
+  trips_completed: number;
+  // Tapped off where they tapped on.
+  trips_cancelled: number;
+  // Cards tapped tonight.
+  riders: number;
+  riding_now: number;
+  cards: number;
+  // How long each kiosk bucket is.
+  bucket_minutes: number;
+  kiosks: KioskActivity[];
+  frequent_riders: (RiderRef & { trips: number })[];
+  costumes: { costume: string; riders: number }[];
+};

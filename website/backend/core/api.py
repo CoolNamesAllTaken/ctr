@@ -12,7 +12,7 @@ from ninja import Field, Router, Schema, Status
 from ninja.errors import HttpError
 from ninja.security import APIKeyHeader
 
-from core import delays, fares, live_map, train_status
+from core import dashboard, delays, fares, live_map, train_status
 from core.models import (
     Alert,
     Arrival,
@@ -699,6 +699,64 @@ def clear_train_status(request, train_id: int):
     train_status.clear_status(train, now)
     [run] = train_status.todays_statuses(now, Train.objects.filter(id=train.id))
     return run
+
+
+class RiderRefOut(Schema):
+    card_uid: str
+    # None for a card with no rider.
+    name: str | None
+    costume: str
+
+
+class TapBucketOut(Schema):
+    start: datetime
+    tap_ons: int
+    tap_offs: int
+
+
+class KioskActivityOut(Schema):
+    kiosk_id: str
+    kiosk_name: str
+    station_name: str | None
+    tap_ons: int
+    tap_offs: int
+    buckets: list[TapBucketOut]
+
+
+class FrequentRiderOut(RiderRefOut):
+    trips: int
+
+
+class CostumeCountOut(Schema):
+    costume: str
+    riders: int
+
+
+class DashboardOut(Schema):
+    as_of: datetime
+    taps: int
+    trips_completed: int
+    # Tapped off where they tapped on.
+    trips_cancelled: int
+    # Cards tapped tonight.
+    riders: int
+    riding_now: int
+    cards: int
+    # How long each kiosk bucket is.
+    bucket_minutes: int
+    kiosks: list[KioskActivityOut]
+    frequent_riders: list[FrequentRiderOut]
+    costumes: list[CostumeCountOut]
+
+
+@router.get("/dashboard/", response=DashboardOut)
+def dashboard_view(request, at: datetime | None = None):
+    """How the night is going, for the Live tab to poll. Pass `at` to see it
+    at another time today."""
+    now = at or timezone.now()
+    if timezone.is_naive(now):
+        now = timezone.make_aware(now)
+    return dashboard.snapshot(now)
 
 
 # Rider-facing, so public on purpose, unlike the employee endpoints above.
