@@ -25,7 +25,16 @@ OLD_BOARDS_FILE = "boards.json"
 
 SPEAKERS = ("front", "inside", "rear")  # logical outputs; the intercom plays on INSIDE
 CHANNELS = ("both", "left", "right")
-MIX_KEYS = ("master", "horn", "bell", "motor", "doors", "air", "brakes")
+MIX_KEYS = ("master", "horn", "bell", "motor", "doors", "air", "brakes")  # the old numpy engine (fallback)
+# the v12 engine (pi/engine): its page's Mix sliders, %, and defaults (caltrain-sounds app/index.src.html)
+MIX12 = {"master": 85, "horn": 85, "breath": 50, "bell": 75, "motor": 80, "door": 70, "doorMech": 70, "doorLeak": 70,
+         "hiss": 70, "sand": 70, "interior": 0}
+LAYER_KEYS = ("hvac", "traction", "rolling", "rumble", "clatter", "whine")
+LAYER_MODES = ("auto", "on", "off")
+LAYER_MAX = {"hvac": 200, "traction": 200, "rolling": 200, "rumble": 200, "clatter": 300, "whine": 100}
+AUTO_SAND = ("inside", "always", "off")
+DOOR_SOUNDS = ("recorded", "synth")
+ENVS = ("dry", "approaching", "platform", "distance")
 TIMINGS = ("costume", "real")
 BOARD_PINS = 8
 RELAY_CHANNELS = 4
@@ -53,7 +62,12 @@ UID_RE = re.compile(r"^[0-9A-F]{4,32}$")
 def defaults():
     return {
         "version": VERSION,
-        "mix": {k: 100 for k in MIX_KEYS},  # % of the engine's default level
+        "mix": {k: 100 for k in MIX_KEYS},  # old engine (fallback): % of its default level
+        "mix12": dict(MIX12),  # v12 engine
+        "layers": {k: {"mode": "auto", "v": 100} for k in LAYER_KEYS},
+        "auto_sand": "inside",
+        "door_sound": "recorded",  # used when the door recording is installed, else the synth doors
+        "env": {"front": "dry", "rear": "dry"},  # outside sound per speaker (INSIDE is always inside the car)
         "timing": "costume",
         "depart_horn": True,
         "speakers": {
@@ -105,6 +119,21 @@ def validate(c):
         errs.append("mix: not an object")
     else:
         errs += [f"mix.{k}: not 0-150" for k, x in mix.items() if k not in MIX_KEYS or not _num(x, 0, 150)]
+    m12 = c.get("mix12", {})
+    if not isinstance(m12, dict) or any(k not in MIX12 or not _num(x, 0, 100) for k, x in m12.items()):
+        errs.append(f"mix12: {', '.join(MIX12)} -> 0-100")
+    lay = c.get("layers", {})
+    if not isinstance(lay, dict) or any(k not in LAYER_KEYS or not isinstance(v, dict) or v.get("mode", "auto")
+                                        not in LAYER_MODES or not _num(v.get("v", 100), 0, LAYER_MAX[k])
+                                        for k, v in lay.items()):
+        errs.append("layers: {hvac|traction|rolling|rumble|clatter|whine: {mode: auto|on|off, v: level %}}")
+    if c.get("auto_sand", "inside") not in AUTO_SAND:
+        errs.append(f"auto_sand: one of {', '.join(AUTO_SAND)}")
+    if c.get("door_sound", "recorded") not in DOOR_SOUNDS:
+        errs.append(f"door_sound: one of {', '.join(DOOR_SOUNDS)}")
+    env = c.get("env", {})
+    if not isinstance(env, dict) or any(k not in ("front", "rear") or v not in ENVS for k, v in env.items()):
+        errs.append(f"env: front / rear -> one of {', '.join(ENVS)}")
     if c.get("timing", "costume") not in TIMINGS:
         errs.append(f"timing: one of {', '.join(TIMINGS)}")
     if not isinstance(c.get("depart_horn", True), bool) or not isinstance(c.get("horn_flash", True), bool):
@@ -189,10 +218,12 @@ def complete(c):
     for k, v in d.items():
         if k not in out:
             out[k] = copy.deepcopy(v)
-        elif isinstance(v, dict) and k in ("mix", "intercom"):
+        elif isinstance(v, dict) and k in ("mix", "mix12", "intercom", "env"):
             out[k] = {**v, **out[k]}
     for k, v in d["speakers"].items():
         out["speakers"][k] = {**v, **out["speakers"].get(k, {})}
+    for k, v in d["layers"].items():
+        out["layers"][k] = {**v, **out["layers"].get(k, {})}
     have = {f["id"] for f in out["functions"]}
     out["functions"] = [f for f in d["functions"] if f["id"] not in have] + out["functions"]
     for f in out["functions"]:

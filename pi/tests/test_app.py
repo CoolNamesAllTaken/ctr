@@ -54,9 +54,14 @@ def running():
                               "rear": {"device": "usb#1", "ch": "left", "level": 50}}
     m.cfg.data["intercom"]["duck_db"] = -18
     m.cfg.save()
+    if m.sidecar:
+        m.sidecar.start()
+        assert wait_for(lambda: m.sidecar.ready, 20), m.sidecar.error
     m.router.start()
     yield
     m.router.stop()
+    if m.sidecar:
+        m.sidecar.stop()
 
 
 def test_speakers_route_to_their_card_and_channel(running):
@@ -72,8 +77,12 @@ def test_speakers_route_to_their_card_and_channel(running):
     rear, _ = latest("usb-1.2")
     horn = rms(jack[:, 0])
     assert horn > 0.05 and rms(jack[:, 1]) == pytest.approx(horn, rel=1e-3)  # front: both channels
-    assert rms(inside[:, 0]) == 0.0 and rms(inside[:, 1]) == pytest.approx(horn, rel=0.05)  # inside: right only
-    assert rms(rear[:, 1]) == 0.0 and rms(rear[:, 0]) == pytest.approx(horn / 2, rel=0.05)  # rear: left at 50 %
+    assert rms(inside[:, 0]) == 0.0 and rms(inside[:, 1]) > 0.005  # inside: right only
+    assert rms(rear[:, 1]) == 0.0 and rms(rear[:, 0]) > 0.0  # rear: left only
+    if m.sidecar:  # v12: each speaker its own mix; no horn at the rear end, a muffled one inside
+        assert rms(rear[:, 0]) < horn / 4 and rms(inside[:, 1]) < horn
+    else:  # the old engine: the same mix everywhere
+        assert rms(inside[:, 1]) == pytest.approx(horn, rel=0.05) and rms(rear[:, 0]) == pytest.approx(horn / 2, rel=0.05)
 
 
 def test_intercom_plays_inside_and_ducks_the_train(running):
@@ -113,9 +122,11 @@ def test_intercom_plays_inside_and_ducks_the_train(running):
         s = np.abs(np.fft.rfft(x * np.hanning(len(x))))
         ff = np.fft.rfftfreq(len(x), 1 / sr)
         return float(np.sqrt(np.sum(s[(ff > lo) & (ff < hi)] ** 2))) / len(x)  # amplitude, any window length
-    before = band(seg(inside[:, 1], i0, t_talk - 0.6, t_talk - 0.1))
-    during = band(seg(inside[:, 1], i0, t_talk + 0.25, t_talk + 0.55))
-    assert 20 * np.log10(during / before) == pytest.approx(-18, abs=1.5)
+    # relative to FRONT (the same horn, not ducked): the v12 horn's level changes over its first second
+    def rel(t0, t1):
+        return band(seg(inside[:, 1], i0, t0, t1)) / band(seg(jack[:, 0], j0, t0, t1))
+    duck = 20 * np.log10(rel(t_talk + 0.25, t_talk + 0.55) / rel(t_talk - 0.6, t_talk - 0.1))
+    assert duck == pytest.approx(-18, abs=1.5)
     # latency: each frame's capture time to when it played on the (fake) card
     lat = [i0 + file_pos(m.router.devices["usb:1.3"].written, m.intercom.t0 + idx) / sr - t / 1000
            for idx, t, *_ in m.intercom.marks]
@@ -168,19 +179,15 @@ def test_mapping_reaches_the_right_pin(board):
     assert wait_for(lambda: not board.coils[6])
 
 
-def test_doors_function_follows_the_doors(board):
+def test_doors_function_follows_the_doors(running, board):
     outs = m.cfg.data["boards"][UID]["outputs"]
     outs[2] = {"fn": "doors", "alt": False}
     m.cfg.save()
-    m.audio.doors_cmd("open")
-    for _ in range(300):  # ~3 s of engine time: the doors open fully
-        m.audio.render()
-    assert m.audio.doors == "open"
+    m.audio.doors_cmd("open")  # the engine (running) moves the doors
+    assert wait_for(lambda: m.audio.doors == "open", 12)
     assert wait_for(lambda: board.coils[2])
     m.audio.doors_cmd("close")
-    for _ in range(20):
-        m.audio.render()
-    assert m.audio.doors == "closing"
+    assert wait_for(lambda: m.audio.doors == "closing", 3)
     # flashing while they move: the pin changes within a second
     seen = set()
     end = time.monotonic() + 1.2
