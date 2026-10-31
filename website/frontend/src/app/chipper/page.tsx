@@ -1,6 +1,29 @@
+import Image from "next/image";
 import Link from "next/link";
-import { CardMark } from "./logo";
+import { DrawingPlaceholder } from "./drawing";
 
+const TILES = [
+  {
+    title: "New to Chipper?",
+    body: "Find out how tapping on and off works.",
+    href: "/how-it-works",
+    drawing: "a rider tapping a card on a kiosk",
+  },
+  {
+    title: "Get a card",
+    body: "Caltreat staff issue cards, loaded and ready to ride.",
+    href: "/get-a-card",
+    drawing: "staff handing a rider a Chipper Card",
+  },
+  {
+    title: "Adding value",
+    body: "Running low? Staff can top up your card.",
+    href: "/get-a-card#adding-value",
+    drawing: "staff topping up a card",
+  },
+];
+
+// Numbered like the "How to pay" steps on the back of the card.
 const STEPS = [
   {
     title: "Get a card",
@@ -16,56 +39,94 @@ const STEPS = [
   },
 ];
 
+// Real cards have 3.18 mm corners on an 85.6 × 54 mm card.
+const PORTRAIT_CORNERS = "5.9% / 3.7%";
+const LANDSCAPE_CORNERS = "3.7% / 5.9%";
+
 export default function ChipperHome() {
   return (
     <>
-      <section className="overflow-hidden bg-[#0a2f51] text-white">
-        <div className="mx-auto grid w-full max-w-[1120px] items-center gap-10 px-4 py-14 md:grid-cols-[3fr_2fr] md:py-20">
+      <section className="overflow-hidden bg-[#e8f6fc]">
+        <div className="mx-auto grid w-full max-w-[1120px] items-center gap-12 px-4 py-14 md:grid-cols-2 md:py-20">
           <div className="flex flex-col gap-6">
-            <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl">
+            <h1 className="text-4xl font-extrabold tracking-tight text-[#132a67] sm:text-5xl">
               One card for every Caltreat ride.
             </h1>
-            <p className="max-w-xl text-lg text-[#d3e3ef]">
+            <p className="max-w-xl text-lg">
               Tap on when you board, tap off when you arrive. Chipper Card
               charges by zone, so you only pay for the distance you travel.
             </p>
-            <div className="flex flex-wrap gap-3">
-              <Link
-                href="/how-it-works"
-                className="rounded-full bg-[#ffc845] px-6 py-3 font-bold text-[#0a2f51] hover:bg-[#ffd76e]"
-              >
-                How it works
-              </Link>
-              <Link
-                href="/get-a-card"
-                className="rounded-full border-2 border-white px-6 py-3 font-bold hover:bg-white hover:text-[#0a2f51]"
-              >
-                Get a card
-              </Link>
-            </div>
+            <Link
+              href="/get-a-card"
+              className="flex w-full max-w-sm items-center justify-between rounded-xl bg-linear-to-b from-[#132a67] to-[#00689b] px-6 py-5 text-xl font-bold text-white shadow-md hover:brightness-125"
+            >
+              Get started
+              <span aria-hidden="true">→</span>
+            </Link>
           </div>
-          <CardMark className="mx-auto w-full max-w-[240px] -rotate-6 md:max-w-[320px] drop-shadow-2xl" />
+
+          <div className="relative mx-auto aspect-[10/9] w-full max-w-[440px]">
+            <Image
+              src="/brand/chipper-back.svg"
+              alt=""
+              width={993}
+              height={644}
+              unoptimized
+              style={{ borderRadius: LANDSCAPE_CORNERS }}
+              className="absolute top-[6%] right-0 w-[78%] rotate-6 shadow-xl"
+            />
+            <Image
+              src="/brand/chipper-front.svg"
+              alt="The Chipper Card"
+              width={644}
+              height={993}
+              priority
+              unoptimized
+              style={{ borderRadius: PORTRAIT_CORNERS }}
+              className="absolute bottom-0 left-0 w-[45%] -rotate-6 shadow-2xl"
+            />
+          </div>
         </div>
       </section>
 
       <section className="mx-auto w-full max-w-[1120px] px-4 py-14">
-        <h2 className="mb-8 text-3xl font-extrabold tracking-tight text-[#0a2f51]">
-          Riding with Chipper
-        </h2>
-        <ol className="grid gap-6 md:grid-cols-3">
-          {STEPS.map(({ title, body }, i) => (
-            <li
-              key={title}
-              className="flex flex-col gap-3 rounded-xl bg-[#eef5fb] p-6"
-            >
-              <span className="flex size-10 items-center justify-center rounded-full bg-[#0077c8] text-lg font-extrabold text-white">
-                {i + 1}
-              </span>
-              <h3 className="text-xl font-bold text-[#0a2f51]">{title}</h3>
-              <p>{body}</p>
+        <ul className="grid gap-6 md:grid-cols-3">
+          {TILES.map(({ title, body, href, drawing }) => (
+            <li key={href}>
+              <Link
+                href={href}
+                className="group flex h-full flex-col gap-4 rounded-2xl border border-[#dbe6f4] p-5 shadow-sm transition-shadow hover:shadow-lg"
+              >
+                <DrawingPlaceholder subject={drawing} />
+                <h2 className="text-xl font-bold text-[#132a67] group-hover:text-[#2979d9]">
+                  {title} <span aria-hidden="true">→</span>
+                </h2>
+                <p>{body}</p>
+              </Link>
             </li>
           ))}
-        </ol>
+        </ul>
+      </section>
+
+      <section className="bg-[#e8f6fc]">
+        <div className="mx-auto w-full max-w-[1120px] px-4 py-14">
+          <h2 className="mb-8 text-3xl font-extrabold tracking-tight text-[#2979d9] uppercase">
+            How to pay
+          </h2>
+          <ol className="grid gap-8 md:grid-cols-3">
+            {STEPS.map(({ title, body }, i) => (
+              <li key={title} className="flex gap-4">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#2979d9] text-lg font-extrabold text-white">
+                  {i + 1}
+                </span>
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-xl font-bold text-[#132a67]">{title}</h3>
+                  <p>{body}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </div>
       </section>
     </>
   );

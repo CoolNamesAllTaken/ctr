@@ -8,6 +8,7 @@ export default function GetACardPage() {
     <InfoPage
       title="Get a card"
       intro="Chipper Cards come from Caltreat staff, already loaded and ready to tap."
+      drawing="staff handing a rider a Chipper Card"
     >
       <section>
         <h2>Ask Caltreat staff</h2>
@@ -16,7 +17,7 @@ export default function GetACardPage() {
           balance. You can start riding as soon as you have it.
         </p>
       </section>
-      <section>
+      <section id="adding-value" className="scroll-mt-6">
         <h2>Adding value</h2>
         <p>
           Running low? Caltreat staff can add value to your card. You need at
