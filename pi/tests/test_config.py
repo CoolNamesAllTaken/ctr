@@ -15,7 +15,7 @@ def test_round_trip(tmp_path):
     cfg = Config.load(tmp_path)
     assert cfg.error is None and not cfg.path.exists()  # no file yet: defaults, nothing written
     cfg.data["mix"]["horn"] = 90
-    cfg.data["speakers"]["inside"] = {"device": "usb:1.3", "ch": "right", "level": 70}
+    cfg.data["speakers"]["a_int"] = {"device": "usb:1.3", "ch": "right", "level": 70}
     cfg.data["functions"].append({"id": "smoke", "name": "Smoke", "kind": "manual", "symbol": "●"})
     cfg.data["relay"][3] = {"fn": "smoke", "alt": False}
     cfg.save()
@@ -37,8 +37,8 @@ def test_partial_and_old_files_get_defaults():
     new, errs = parse(json.dumps({"version": 1, "mix": {"bell": 50}}))
     assert errs == []
     assert new["mix"]["bell"] == 50 and new["mix"]["horn"] == 100
-    assert new["speakers"]["front"]["device"] == "jack"
-    assert {f["id"] for f in new["functions"]} >= {"head", "markers", "doors"}
+    assert new["version"] == 2 and new["speakers"]["a_ext"] == {"device": "usb#1", "ch": "left", "level": 100}
+    assert {f["id"] for f in new["functions"]} >= {"a_head", "b_markers", "a_ditch_l", "doors"}
 
 
 @pytest.mark.parametrize("bad, words", [
@@ -98,12 +98,12 @@ def test_reset_keeps_board_names(tmp_path):
 def test_diff_lists_changes():
     a, b = defaults(), defaults()
     b["mix"]["horn"] = 80
-    b["speakers"]["rear"]["device"] = "usb:1.3"
+    b["speakers"]["b_ext"]["device"] = "usb:1.3"
     b["relay"][0]["fn"] = None
     d = diff(a, b)
     assert "mix.horn: 100 -> 80" in d
-    assert 'speakers.rear.device: "none" -> "usb:1.3"' in d
-    assert 'relay[0].fn: "head" -> null' in d
+    assert 'speakers.b_ext.device: "usb#2" -> "usb:1.3"' in d
+    assert 'relay[0].fn: "a_head" -> null' in d
     assert diff(a, a) == []
 
 
@@ -116,7 +116,7 @@ def test_listeners_run_on_save(tmp_path):
     assert seen == [10]
 
 
-@pytest.mark.parametrize("text", ['{"version": 2, "mix": {"horn": 33}}', '{"version": 1, "mix": {"horn": 999}}', "{oops"])
+@pytest.mark.parametrize("text", ['{"version": 3, "mix": {"horn": 33}}', '{"version": 1, "mix": {"horn": 999}}', "{oops"])
 def test_unusable_file_is_kept_before_defaults_overwrite_it(tmp_path, text):
     (tmp_path / "config.json").write_text(text)
     cfg = Config.load(tmp_path)

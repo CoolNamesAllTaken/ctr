@@ -279,6 +279,49 @@ known by their chip ID (the MAC is shown too) and named A, B, … in the order
 they are first seen; you can rename them. Default mapping: R1/R2 headlights
 A/B, R3/R4 markers A/B, board pins by hand.
 
+## Cars A and B: direction, speakers, lights
+
+The train runs with car A or car B leading. The engineer page's reverser
+(A ◀ / ▶ B, also in the display) switches it, only at a standstill with the
+power off; otherwise it says "■ stop first". The direction is saved and is
+the same in every browser.
+
+**Speakers.** Each car has an outside (ext) and an inside (int) speaker, each
+on one half of a USB DAC. Settings → Speakers maps them; the defaults are
+DAC #1 (first by USB port) L = A ext, R = A int and DAC #2 L = B ext,
+R = B int. What each one plays follows the direction:
+
+| | leading car | trailing car |
+| --- | --- | --- |
+| outside | front mix: horn, bell, train | rear mix: bell (-6 dB), train, no horn |
+| inside | inside mix + intercom | inside mix + intercom |
+
+Reversing fades the two outside speakers over to their new mix (60 ms).
+Recordings' F / I / R mean front / inside / rear, so they follow the direction.
+
+**Lights.** Each car has a headlight, ditch lights L and R and markers, as
+light functions (A headlight, A ditch L, ...) that relays and board pins map
+to. They follow 49 CFR 229.125. At the leading car the headlight and ditch
+lights burn steady. The ditch lights flash alternately (L / R) when the horn
+sounds at grade crossings (229.125(d)): here they flash while the horn sounds
+or the Crossing sequence runs, and for 15 s after the last horn (the rule lets
+them continue until the train is past). The trailing car shows its markers,
+with its headlight and ditch lights off. Settings → Light functions sets the
+flash rate (40-180 per minute per lamp, default 60) and how long the flashing
+lasts after the horn. The engineer page's ☀ Lights button switches all of
+them off and on.
+
+Default mapping: relay R1 = A headlight, R2 = B headlight (the white
+channels), R3 = A markers, R4 = B markers (red). A lighting controller named
+A or B (they get letters in the order they are found) drives its car's ditch
+L, ditch R, headlight and markers on GP0-GP3 (the MOSFET module's lights 1-4).
+Change any of these in Settings.
+
+A config from before (version 1) is updated on first start. If its speakers
+and relays were still at their old defaults, it gets the new ones; otherwise
+front -> A ext, inside -> A int, rear -> B ext (B int off), and the relays keep
+their old mapping. Check Settings → Speakers and the relay and board mappings.
+
 ## Recordings
 
 Settings → ♪ Recordings: ＋ uploads sound files (wav, mp3, m4a, ogg, flac; up to

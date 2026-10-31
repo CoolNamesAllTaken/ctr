@@ -110,6 +110,7 @@ def test_sliders_keep_their_values(app, viewport):
 
         stop()
         start()
+        page = browser.new_page(viewport=viewport)  # the old page reloads itself on reconnect: its goto would race that
         page.goto(url)
         kept = [(k, v) for k, v in dragged if not k.startswith(CARDS)]
         assert [(k, v) for k, v in values(page) if not k.startswith(CARDS)] == kept
