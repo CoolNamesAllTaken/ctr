@@ -279,6 +279,28 @@ known by their chip ID (the MAC is shown too) and named A, B, … in the order
 they are first seen; you can rename them. Default mapping: R1/R2 headlights
 A/B, R3/R4 markers A/B, board pins by hand.
 
+## Recordings
+
+Settings → ♪ Recordings: ＋ uploads sound files (wav, mp3, m4a, ogg, flac; up to
+10 min / 100 MB each). The browser converts them to WAV, so the Pi needs no
+ffmpeg; a file the browser can't play is refused. Each recording has ▶ / ■,
+⟳ loop, its speakers (F / I / R), a level, how much it ducks the train while it
+plays, a pin for the engineer page, ⤓ download and delete. Pinned recordings
+are big buttons on the engineer page (tap to play / stop, several at once, ■
+stops all), the same in every browser.
+
+The files live in `~/.config/caltreat/recordings/`, their settings in
+`config.json`. ⤓ / ⤒ next to ♪ download / restore all of them as a zip; the
+settings backup carries only the settings.
+
+## Look
+
+Dark by default, for running at night; ☀ / ☾ in the header switches to a light
+theme in the website's colors (remembered per browser). Logo, icons and the
+Roboto font come from [`website/frontend`](../website/frontend) and are served
+by the app, so they work without internet. "Add to Home Screen" gets the
+Caltreat icon.
+
 ## Hardware
 
 | What | How the app reaches it |

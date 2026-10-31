@@ -1,0 +1,96 @@
+/* Caltreat branding on top of cab.css: the website's logo, palette (Caltrain red #dd1f29, navy #132a67, blue #2979d9,
+   greys) and font (Roboto), served from here (no internet on the train). Dark by default, for night running: dark
+   surfaces, no white areas, red / amber kept readable. [data-theme=light] on <html> (theme.js) is the website's look. */
+@font-face { font-family: "Roboto"; font-weight: 400; font-display: swap; src: url(fonts/roboto-400.woff2) format("woff2"); }
+@font-face { font-family: "Roboto"; font-weight: 500; font-display: swap; src: url(fonts/roboto-500.woff2) format("woff2"); }
+@font-face { font-family: "Roboto"; font-weight: 700; font-display: swap; src: url(fonts/roboto-700.woff2) format("woff2"); }
+
+:root {
+  --red: #dd1f29;
+  --navy: #132a67;
+  --blue: #2979d9;
+  --body: "Roboto", "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --brand-logo: url(brand/logo-dark.svg);
+  --stripe: var(--red);
+}
+
+/* Logo before the page name; a thin brand stripe under the header (the website's banner bars) */
+.desk > header { position: relative; padding-bottom: 10px; }
+.desk > header::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, var(--stripe) 0 62%, transparent 62% 66%, var(--stripe) 66% 76%, transparent 76% 80%, var(--blue) 80%); opacity: .85; }
+.desk > header .mark { align-items: center; }
+.desk > header .mark::before { content: ""; width: 54px; height: 45px; flex: none; background: var(--brand-logo) center / contain no-repeat; }
+.desk > header .hd-right .mark::before { width: 40px; height: 34px; }
+
+/* Theme button: shows the theme it switches to */
+.themebtn { color: var(--ink); font: 400 20px/1 var(--body); cursor: pointer; }
+.themebtn .th-l { display: none; }
+:root[data-theme=light] .themebtn .th-d { display: none; }
+:root[data-theme=light] .themebtn .th-l { display: inline; }
+
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* ---- light: the website's colors ---- */
+:root[data-theme=light] {
+  color-scheme: light;
+  --desk: #f6f6f6;
+  --panel: #ffffff;
+  --bezel: #eaeaea;
+  --line: #bcbdbe;
+  --ink: #212529;
+  --muted: #515151;
+  --red: #dd1f29;
+  --red-deep: #9e150f;
+  --amber: #b86e00;
+  --green: #13804a;
+  --brand-logo: url(brand/logo.svg);
+}
+:root[data-theme=light] .chip.live { color: #fff; }
+:root[data-theme=light] .ctl { box-shadow: 0 1px 2px rgba(19,42,103,.08); }
+:root[data-theme=light] .ctl h2, :root[data-theme=light] .set h2 { color: var(--navy); }
+:root[data-theme=light] .mark b { color: var(--navy); }
+:root[data-theme=light] .errs, :root[data-theme=light] .recmsg.bad { color: #b3121a; }
+:root[data-theme=light] .sbtn.warn { color: #b3121a; }
+:root[data-theme=light] .pad, :root[data-theme=light] .sq, :root[data-theme=light] .talk, :root[data-theme=light] .pat,
+:root[data-theme=light] .lt { border-color: var(--line); }
+:root[data-theme=light] .sq .ic, :root[data-theme=light] .pi { stroke: var(--ink); }
+:root[data-theme=light] .pad.bell.on, :root[data-theme=light] .pad.door.on, :root[data-theme=light] .sq.on,
+:root[data-theme=light] .talk.on, :root[data-theme=light] .sbtn.on, :root[data-theme=light] .recbtn.on { color: #e9ecef; }
+:root[data-theme=light] .pad.bell.on .pi, :root[data-theme=light] .sq.on .ic { stroke: #f4f1e6; }
+:root[data-theme=light] input[type=range]::-webkit-slider-runnable-track { background: linear-gradient(90deg, #bcbdbe, #8a8d8f); }
+:root[data-theme=light] input[type=range]::-moz-range-track { background: linear-gradient(90deg, #bcbdbe, #8a8d8f); }
+:root[data-theme=light] .q-dialog .dlg, :root[data-theme=light] .dlg { background: #fff; color: var(--ink); }
+
+/* ---- recordings (recordings_ui.py, recordings.js) ---- */
+.set h2 .acts .sbtn { min-height: 34px; min-width: 40px; text-decoration: none; display: inline-grid; place-items: center; }
+.recmsg { font: 500 13px/1.3 var(--mono); color: var(--muted); min-height: 0; overflow-wrap: anywhere; }
+.recmsg:empty { display: none; }
+.recmsg.bad { color: #ff8a80; }
+.rec { border-top: 1px solid var(--bezel); padding-block: 4px 10px; display: grid; gap: 6px; }
+.rec:first-of-type { border-top: 0; }
+.rec .srow { border-top: 0; grid-template-columns: minmax(0, 1fr); }
+.rec .srow .nm { flex-direction: row; align-items: center; gap: 8px; text-transform: none; letter-spacing: 0; }
+.rec .srow .nm .txt { font: 600 16px var(--body); }
+.rec a.sbtn { text-decoration: none; display: inline-grid; place-items: center; }
+.sbtn.chip { min-width: 40px; font: 700 14px/1 var(--display); letter-spacing: .08em; }
+.recbar { height: 4px; border-radius: 2px; background: var(--bezel); overflow: hidden; visibility: hidden; }
+.recbar.on { visibility: visible; }
+.recbar i { display: block; height: 100%; width: 0; background: var(--green); transition: width .5s linear; }
+
+.recs h2 { align-items: center; }
+.recstop { width: 40px; height: 34px; border-radius: 8px; border: 1px solid var(--red); background: var(--bezel); color: var(--red);
+  font: 700 16px/1 var(--display); }
+.recstop:disabled { opacity: .3; border-color: var(--line); color: var(--muted); }
+.recgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.recbtn { position: relative; min-height: 84px; border-radius: 12px; border: 2px solid var(--bezel); background: var(--panel); color: var(--ink);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; overflow: hidden; }
+.recbtn .pring { position: absolute; inset: 6px; width: auto; height: calc(100% - 12px); margin: auto; aspect-ratio: 1; pointer-events: none; }
+.recbtn .pring circle { fill: none; stroke-width: 3; transform: rotate(-90deg); transform-origin: 50% 50%; }
+.recbtn .pring .rt { stroke: var(--bezel); }
+.recbtn .pring .rp { stroke: var(--green); stroke-linecap: round; stroke-dasharray: 182.2; stroke-dashoffset: 182.2; transition: stroke-dashoffset .25s linear; }
+.recbtn i { font: 700 22px/1 var(--display); font-style: normal; position: relative; }
+.recbtn b { font: 600 14px/1.15 var(--display); letter-spacing: .06em; text-transform: uppercase; text-align: center; position: relative;
+  overflow-wrap: anywhere; max-width: 100%; }
+.recbtn.on { border-color: var(--green); background: #0e3321; box-shadow: 0 0 14px rgba(47,208,122,.25); }
+.recbtn.on i { color: var(--green); }
+.sbtn svg.ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
