@@ -1,5 +1,5 @@
 """Stands in for `aplay` without sound hardware: reads raw S16_LE frames from stdin at real time (allowing the same
-buffer as the real player) and, with a directory, keeps them in <dir>/<name>-<n>.raw plus <name>-<n>.json, which
+buffer as the real player, reporting underruns like aplay) and, with a directory, keeps them in <dir>/<name>-<n>.raw plus <name>-<n>.json, which
 records when the first frame was taken (time.time()), so tests can tell when each sample "played".
 
     python -m caltreat.fakesink <dir or -> <name> <rate> <channels> [buffer ms]
@@ -38,6 +38,11 @@ def main():
             if out:
                 with open(path[:-4] + ".json", "w") as f:
                     json.dump({"start": start, "rate": rate, "channels": channels}, f)
+        else:
+            late = time.monotonic() - t0 - frames / rate  # > 0: the "card" ran dry this long ago
+            if late > 0.002:  # like aplay: report it, the card restarts from here
+                print(f"underrun!!! (at least {late * 1000:.3f} ms long)", file=sys.stderr, flush=True)
+                t0, frames = time.monotonic(), 0
         if out:
             out.write(data)
             out.flush()

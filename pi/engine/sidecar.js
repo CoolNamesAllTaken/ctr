@@ -9,7 +9,8 @@
 //                        with blocking writes, so the app's reading pace (its sound cards' clock) paces the engines;
 //                        the app keeps the pipe small, so little audio is in flight.
 //   fd $CALTREAT_STATE_FD (default 3), JSON lines:  {"ready":true}, engine state ~20/s ({"speed","A","patternBusy","doors","doorPos",
-//                        "doorSound","stopping"}), {"error":...}
+//                        "doorSound","stopping"}), {"error":...}, once a second per bus {"perf":{"bus","avgMs","maxMs","blockMs"}}
+//                        (render time per block: the app's Health panel)
 //
 // One worker thread per bus (FRONT, INSIDE, REAR: a Pi 4 needs a core per bus), each running KissBuses.Preview set to
 // its bus: exactly what the v12 page's Output selector plays for that speaker. Each renders up to DEPTH blocks ahead
@@ -44,6 +45,7 @@ if (isMainThread) {
     w.on('message', (m) => {
       if (m.warm != null) { if (++warm === BUSES.length) { mux.postMessage({ go: true }); say({ ready: true, warmMs: m.warm }); } }
       else if (m.state) say(m.state);
+      else if (m.perf) say({ perf: m.perf });
       else if (m.error) say({ error: m.error });
     });
     w.on('error', (e) => { say({ error: String(e && e.stack || e) }); process.exit(2); });
@@ -110,12 +112,20 @@ if (isMainThread) {
   }
   parentPort.postMessage({ warm: Date.now() - t0 });
   let nextState = 0;
+  const perf = { n: 0, sum: 0, max: 0 }; // render time per block, reported once a second of audio
   for (;;) {
     drain();
     const fill = Atomics.load(r.c, 0) - Atomics.load(r.c, 1);
     if (fill < DEPTH) {
       const w = Atomics.load(r.c, 0);
+      const t = performance.now();
       p.render(tmp, BLOCK);
+      const ms = performance.now() - t;
+      perf.n++; perf.sum += ms; if (ms > perf.max) perf.max = ms;
+      if (perf.n * BLOCK >= SR) {
+        parentPort.postMessage({ perf: { bus, avgMs: +(perf.sum / perf.n).toFixed(3), maxMs: +perf.max.toFixed(2), blockMs: +(1000 * BLOCK / SR).toFixed(2) } });
+        perf.n = 0; perf.sum = 0; perf.max = 0;
+      }
       r.data.set(tmp[0], (w % SLOTS) * BLOCK);
       rendered += BLOCK;
       Atomics.add(r.c, 0, 1); Atomics.notify(r.c, 0);

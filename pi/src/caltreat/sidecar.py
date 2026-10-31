@@ -57,8 +57,10 @@ class Sidecar:
     RESTART = 2.0  # s between restarts
     READ_TIMEOUT = 0.03  # s a block may be late before the Router plays silence for it
 
-    def __init__(self, node=None, warmup=True):
+    def __init__(self, node=None, warmup=True, read_timeout=None):
         self.node = node or find_node()[0]
+        if read_timeout:
+            self.READ_TIMEOUT = read_timeout
         self.warmup = warmup
         self.proc = None
         self.ready = False
@@ -68,6 +70,7 @@ class Sidecar:
         self.started = 0.0
         self.restarts = 0
         self.late = 0  # blocks not ready in time
+        self.perf = {}  # bus -> {"avgMs", "maxMs", "blockMs"}: render time per block, from the engine once a second
         self.replay = {}  # key -> message, sent again to a restarted engine
         self.wlock = threading.Lock()
         self.running = False
@@ -129,6 +132,8 @@ class Sidecar:
                 if m.get("ready"):
                     self.ready, self.error, self.warm_ms = True, None, m.get("warmMs")
                     print(f"caltreat: v12 engine ready (warm-up {self.warm_ms} ms)", file=sys.stderr)
+                elif "perf" in m:
+                    self.perf[m["perf"].get("bus")] = m["perf"]
                 elif "error" in m:
                     self.error = m["error"][:300]
                     print(f"caltreat: engine: {self.error}", file=sys.stderr)
@@ -161,6 +166,12 @@ class Sidecar:
             self._write(m)
 
     # ---------- audio (the Router's thread) ----------
+    def realtime(self):
+        """How many times faster than real time the slowest bus renders (its worst block in the last second), or
+        None. Under ~1.5 the engine can't keep up when anything else wants the CPU."""
+        f = [p["blockMs"] / p["maxMs"] for p in self.perf.values() if p.get("maxMs")]
+        return round(min(f), 2) if f else None
+
     def read_block(self):
         """(BLOCK, 3) float32 [front, inside, rear], or None if the engine has nothing ready in time."""
         p = self.proc
