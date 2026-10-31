@@ -24,17 +24,20 @@ const dateTimeFormat = new Intl.DateTimeFormat("en-US", {
 });
 
 async function AlertsAndDelays() {
-  let data: [TrainRun[], Alert[], Alert[]];
+  let data: [TrainRun[], TrainRun[], Alert[], Alert[]];
   try {
     data = await Promise.all([
       apiFetch<TrainRun[]>("/api/delays/"),
+      // Trains still to finish their run, counting delays; there's no point
+      // delaying or alerting about the rest.
+      apiFetch<TrainRun[]>("/api/delays/?upcoming=true"),
       apiFetch<Alert[]>("/api/alerts/"),
       apiFetch<Alert[]>("/api/alerts/?active=true&limit=100"),
     ]);
   } catch {
     return <BackendUnreachable />;
   }
-  const [runs, alerts, activeAlerts] = data;
+  const [runs, upcomingRuns, alerts, activeAlerts] = data;
   const runsWithStops = runs.filter((run) => run.stops.length > 0);
 
   return (
@@ -45,7 +48,7 @@ async function AlertsAndDelays() {
           Tell riders about a delay or disruption. Pick a train, or leave it as
           the whole line for something like track work.
         </p>
-        <AlertForm runs={runs} />
+        <AlertForm runs={upcomingRuns} />
       </section>
 
       <section className="flex flex-col gap-4">
@@ -99,6 +102,8 @@ async function AlertsAndDelays() {
           <p className={mutedClass}>
             No trains scheduled yet. Add one on the Trains tab.
           </p>
+        ) : upcomingRuns.length === 0 ? (
+          <p className={mutedClass}>No more trains today.</p>
         ) : (
           <>
             <p className={mutedClass}>
@@ -107,7 +112,7 @@ async function AlertsAndDelays() {
               put the train back on time from that station. Optionally link an
               active alert that explains the delay.
             </p>
-            <DelayForm runs={runsWithStops} alerts={activeAlerts} />
+            <DelayForm runs={upcomingRuns} alerts={activeAlerts} />
           </>
         )}
       </section>

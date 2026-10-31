@@ -623,9 +623,18 @@ class DelayIn(Schema):
 
 
 @router.get("/delays/", response=list[TrainRunOut])
-def list_delays(request):
-    """Today's run of every train, with live delays."""
-    return delays.train_runs(timezone.localdate())
+def list_delays(request, upcoming: bool = False):
+    """Today's run of every train, with live delays. Pass upcoming to leave
+    out trains already at the end of their run, counting delays."""
+    now = timezone.now()
+    runs = delays.train_runs(timezone.localdate(now))
+    if upcoming:
+        runs = [
+            run
+            for run in runs
+            if run["stops"] and run["stops"][-1]["expected_at"] >= now
+        ]
+    return runs
 
 
 @router.post("/delays/", response=TrainRunOut)

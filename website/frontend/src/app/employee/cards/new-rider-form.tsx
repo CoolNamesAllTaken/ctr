@@ -11,9 +11,15 @@ import {
   secondaryButtonClass,
 } from "../ui";
 import { cardRiderName, createRider } from "./actions";
+import { type CardInfo, MAX_RIDES } from "./pn532";
 import { type TappedCard, useCardReader } from "./use-card-reader";
 
 type Reader = ReturnType<typeof useCardReader>;
+
+/** e.g. "1 ride (tapped on)". */
+function describeRides(info: Extract<CardInfo, { kind: "chipper" }>) {
+  return `${formatRides(info.rides)}${info.tappedOn ? " (tapped on)" : ""}`;
+}
 
 function ReaderStatusLine({ reader }: { reader: Reader }) {
   const { supported, status, connect } = reader;
@@ -64,9 +70,10 @@ function CardStatusLine({ card }: { card: TappedCard | null }) {
   }
   return (
     <p className={`text-sm font-normal ${mutedClass}`}>
-      {info.kind === "blank" && "Blank card."}
+      {info.kind === "blank" &&
+        (info.v1 ? "Old v1 card. It will be rewritten as v2." : "Blank card.")}
       {info.kind === "chipper" &&
-        `Chipper card with ${formatRides(info.rides)} left.`}
+        `Chipper card with ${describeRides(info)} left.`}
       {info.kind === "damaged" &&
         "Chipper card with a damaged ride block. It will be rewritten."}
     </p>
@@ -82,7 +89,7 @@ function RidesInput({ className = "" }: { className?: string }) {
         type="number"
         required
         min="1"
-        max="255"
+        max={MAX_RIDES}
         step="1"
         defaultValue="1"
         className={`${inputClass} ${className}`}
@@ -96,7 +103,7 @@ function confirmOverwrite(card: TappedCard, rides: number) {
   return (
     card.info.kind !== "chipper" ||
     confirm(
-      `This card holds ${formatRides(card.info.rides)}. Replace them with ${formatRides(rides)}?`,
+      `This card holds ${describeRides(card.info)}. Replace them with ${formatRides(rides)}?`,
     )
   );
 }

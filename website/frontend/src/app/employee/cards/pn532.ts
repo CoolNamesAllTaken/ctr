@@ -43,12 +43,18 @@ const CMD_IN_DATA_EXCHANGE = 0x40;
 const TIMEOUT_MS = 1000;
 
 // The Chipper ride block (spec: firmware/docs/chipper_card.md): sector 1,
-// block 4, factory keys. "CHPR", version, rides left, 8 zero bytes, CRC_A of
-// bytes 0-13 (low byte first).
+// block 4, factory keys. "CHPR", version 2, half rides left, 8 zero bytes,
+// CRC_A of bytes 0-13 (low byte first). Tapping on and off each take half a
+// ride, so an odd count means the rider is mid-trip.
 const CHIPPER_BLOCK = 4;
 const FACTORY_KEY = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
 const MAGIC = [0x43, 0x48, 0x50, 0x52];
-const VERSION = 1;
+const VERSION = 2;
+// v1 stored whole rides. The portal re-issues those cards like blank ones.
+const V1 = 1;
+
+/** The most whole rides a card can hold (twice this has to fit in a byte). */
+export const MAX_RIDES = 127;
 const MIFARE_AUTH_A = 0x60;
 const MIFARE_READ = 0x30;
 const MIFARE_WRITE = 0xa0;
@@ -56,8 +62,8 @@ const SAK_CLASSIC_1K = 0x08;
 
 /** What's on a card, as far as Chipper is concerned. */
 export type CardInfo =
-  | { kind: "blank" }
-  | { kind: "chipper"; rides: number }
+  | { kind: "blank"; v1?: true }
+  | { kind: "chipper"; rides: number; tappedOn: boolean }
   | { kind: "damaged" }
   | { kind: "unusable"; message: string };
 
@@ -75,12 +81,12 @@ export function crcA(data: Uint8Array): number {
   return crc;
 }
 
-/** A valid ride block holding the given rides (0-255). */
+/** A valid ride block holding the given whole rides (0 to MAX_RIDES). */
 export function makeChipperBlock(rides: number): Uint8Array {
   const block = new Uint8Array(16);
   block.set(MAGIC);
   block[4] = VERSION;
-  block[5] = rides;
+  block[5] = 2 * rides;
   const crc = crcA(block.subarray(0, 14));
   block[14] = crc & 0xff;
   block[15] = crc >> 8;
@@ -88,14 +94,18 @@ export function makeChipperBlock(rides: number): Uint8Array {
 }
 
 export function parseChipperBlock(block: Uint8Array): CardInfo {
-  if (!MAGIC.every((b, i) => block[i] === b) || block[4] !== VERSION) {
-    return { kind: "blank" };
-  }
+  if (!MAGIC.every((b, i) => block[i] === b)) return { kind: "blank" };
+  if (block[4] === V1) return { kind: "blank", v1: true };
+  if (block[4] !== VERSION) return { kind: "blank" };
   const crc = crcA(block.subarray(0, 14));
   if (block[14] !== (crc & 0xff) || block[15] !== crc >> 8) {
     return { kind: "damaged" };
   }
-  return { kind: "chipper", rides: block[5] };
+  return {
+    kind: "chipper",
+    rides: block[5] >> 1,
+    tappedOn: (block[5] & 1) === 1,
+  };
 }
 
 const toHex = (bytes: Uint8Array) =>

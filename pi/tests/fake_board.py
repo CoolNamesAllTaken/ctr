@@ -1,5 +1,6 @@
 """A fake CalTreat lighting controller for tests: Modbus TCP with just what the app uses (function codes 4, 15, 16
 and 43; registers from firmware/caltreat_lighting_controller/src/regmap.h). Records the coils and pin blocks written.
+Like the real board, a dropped connection puts every pin at its failsafe default (HR 2000 + 8 * pin, if written).
 
     board = FakeBoard("127.0.1.10", 15020, uid="E6614103E7A1B2C3").start()
     board.coils  # [bool] x 8, as last written by the app
@@ -111,6 +112,9 @@ class FakeBoard:
         finally:
             conn.close()
             self.failsafe = True  # the real board falls back when the connection drops
+            for gpio in range(8):
+                flags = self.holding.get(2000 + 8 * gpio + 3)
+                self.coils[gpio] = bool(flags & 0x10) if flags is not None else False
 
 
 if __name__ == "__main__":

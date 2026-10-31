@@ -6,6 +6,7 @@ player writes its raw PCM there (`<device>-<n>.raw` plus a `.json` with its star
 reports two fake USB cards (ports 1.2 and 1.3), so the settings page can be tried out.
 """
 
+import math
 import os
 import re
 import shutil
@@ -71,28 +72,80 @@ def player(card, channels=2, name=None):
         stdin=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)  # unbuffered: a buffered stdin holds ~40 ms
 
 
-_fake_volumes = {}
+# Card volumes are set in dB (not amixer -M %, which lands on a different dB on each card). Each mixer control's dB
+# range, when amixer can't tell (fake mode):
+JACK_DB = (-102.39, 4.0)  # bcm2835 PCM: -10239..400 in 0.01 dB (kernel bcm2835-ctl.c)
+USB_DB = (-28.37, -0.06)  # C-Media CM108/CM119 Speaker: 0..151 raw, about 0.19 dB a step
+# Card default: full scale. The jack's PCM above 0 dB is digital gain (clips loud sounds), so 0 dB there.
+DEFAULT_DB = 0.0
+# Card trim: app gain (dB) per card so the same level sounds the same on any output. The Pi 4 jack's full scale is
+# about 1 Vpp (~0.35 Vrms: 3.3 V PWM through its divider), a C-Media DAC's about 1 Vrms: the jack is ~9 dB quieter.
+# An estimate: adjust by ear. Gain above full scale goes through the Router's soft limiter.
+JACK_TRIM_DB = 9.0
+USB_TRIM_DB = 0.0
+
+_fake_db = {}
 
 
-def get_volume(card=JACK_CARD, control=JACK_MIXER):
+def default_trim(device):
+    return JACK_TRIM_DB if device == JACK else USB_TRIM_DB
+
+
+def db_range(card=JACK_CARD, control=JACK_MIXER):
+    """(min, max) dB of the card's playback volume control."""
+    dflt = JACK_DB if card == JACK_CARD else USB_DB
     if FAKE:
-        return _fake_volumes.get(card, 80)
+        return dflt
     try:
-        out = subprocess.run(["amixer", "-c", card, "-M", "sget", control], capture_output=True, text=True).stdout
-    except OSError:
-        return 50
-    m = re.search(r"\[(\d+)%\]", out)
-    return int(m.group(1)) if m else 50
+        out = subprocess.run(["amixer", "-c", card, "cget", f"name={control} Playback Volume"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return dflt
+    if m := re.search(r"dBminmax(?:mute)?-min=(-?[\d.]+)dB,max=(-?[\d.]+)dB", out):
+        return float(m[1]), float(m[2])
+    raw = re.search(r"min=(-?\d+),max=(-?\d+)", out)
+    if (m := re.search(r"dBscale-min=(-?[\d.]+)dB,step=([\d.]+)dB", out)) and raw:
+        lo = float(m[1])
+        return lo, round(lo + float(m[2]) * (int(raw[2]) - int(raw[1])), 2)
+    return dflt
 
 
-def set_volume(pct, card=JACK_CARD, control=JACK_MIXER):
+def get_volume_db(card=JACK_CARD, control=JACK_MIXER):
+    """The control's current dB, or None if unknown."""
     if FAKE:
-        _fake_volumes[card] = int(pct)
-        return
+        return _fake_db.get(card)
     try:
-        subprocess.run(["amixer", "-c", card, "-M", "-q", "sset", control, f"{int(pct)}%"])
-    except OSError:
+        out = subprocess.run(["amixer", "-c", card, "sget", control], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    m = re.search(r"\[(-?[\d.]+)dB\]", out)
+    return float(m[1]) if m else None
+
+
+def set_volume_db(db, card=JACK_CARD, control=JACK_MIXER, rng=None):
+    """Set the control to db (clamped to its range); the dB set."""
+    lo, hi = rng or db_range(card, control)
+    db = round(min(hi, max(lo, float(db))), 2)
+    if FAKE:
+        _fake_db[card] = db
+        return db
+    try:  # "--": a negative value isn't an option
+        subprocess.run(["amixer", "-c", card, "-q", "--", "sset", control, f"{db:.2f}dB"], timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
         pass
+    return db
+
+
+def pct_to_db(pct, rng):
+    """An `amixer -M` percentage -> the dB it set (alsa-utils volume_mapping.c), for migrating old settings."""
+    lo, hi = rng
+    v = min(1.0, max(0.0, pct / 100))
+    if hi - lo <= 24:  # MAX_LINEAR_DB_SCALE: linear in dB
+        return round(lo + v * (hi - lo), 2)
+    mn = 10 ** ((lo - hi) / 60)
+    v = v * (1 - mn) + mn
+    return round(max(lo, 60 * math.log10(max(v, 1e-36)) + hi), 2)
 
 
 def mixer_control(card):

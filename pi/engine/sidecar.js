@@ -4,7 +4,9 @@
 //   stdin  (JSON lines)  engine / bus messages, exactly what the v12 page sends: {"t":"horn","on":true},
 //                        {"t":"doors","v":"toggle"}, {"t":"intensity","k":"bell","v":0.75}, {"t":"busEnv","bus":"front",
 //                        "env":"dry"}, ...; {"t":"doorFiles","dir":..., "name":...} loads the recorded doors (WAV + JSON);
-//                        "at": <sample> on a message applies it when that sample is rendered (tests, exact timing).
+//                        "at": <sample> on a message applies it when that sample is rendered (tests, exact timing);
+//                        {"t":"estop"}: EMERGENCY STOP, handled here (the vendored engine has no instant stop): power
+//                        off, speed 0 at once, horn and patterns off, the brake-air dump and, if it was moving, the squeal.
 //   stdout (binary)      blocks of BLOCK frames, float32 little endian, interleaved [front, inside, rear]. Written
 //                        with blocking writes, so the app's reading pace (its sound cards' clock) paces the engines;
 //                        the app keeps the pipe small, so little audio is in flight.
@@ -75,7 +77,17 @@ if (isMainThread) {
   const tmp = [new Float32Array(BLOCK), new Float32Array(BLOCK)];
   let rendered = 0; // samples rendered since go-live
   const later = []; // messages with "at"
+  function estop() {
+    for (const b of Object.values(p.buses)) {
+      const e = b.e, moving = e.motor.speed > 0.02;
+      e.msg({ t: 'throttle', v: 0 }); e.msg({ t: 'stopPattern' }); e.msg({ t: 'horn', on: false });
+      e.motor.speed = 0; e.motor.stopping = false; e.motor.regen = 0;
+      if (moving && !e.stop.on) e.msg({ t: 'squeal' }); // the last seconds of a stop: squeal, thump, air
+      e.msg({ t: 'hiss' }); // the brake pipe venting
+    }
+  }
   function apply(m) {
+    if (m.t === 'estop') return estop();
     if (m.t === 'doorFiles') {
       try { const ds = loadDoorSamples(m.dir, m.name || 'doors_v10'); p.msg({ t: 'doorSamples', pcm: ds.pcm, meta: ds.meta }); }
       catch (e) { if (bus === 'front') parentPort.postMessage({ error: 'door recording: ' + e.message }); }

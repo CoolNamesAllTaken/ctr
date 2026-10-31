@@ -1012,9 +1012,9 @@ INSIDE, REAR: the 3.5 mm jack or a channel of a USB sound card) by piping raw PC
 no PortAudio or other system packages are needed. The intercom (intercom.py) plays on INSIDE, which is ducked while
 someone talks. All browsers share the one engine, so its state (bell, doors, throttle, sequences, ...) is shared too.
 
-The Depart / Arrive / Crossing sequences (sequencer.py) follow GCOR 5.8 and 49 CFR 222.21. Lights: the relay shield
-(white head/ditch lights, red markers by default) and GP0-GP7 of the CalTreat lighting controllers (Waveshare
-RP2350-ETH, Modbus TCP) found on the Pi's wired network; every output is mapped to a light function in the settings.
+The Depart / Arrive / Crossing sequences (sequencer.py) follow GCOR 5.8 and 49 CFR 222.21. Lights: GP0-GP7 of the
+CalTreat lighting controllers (Waveshare RP2350-ETH, Modbus TCP) found on the Pi's wired network; every output is mapped
+to a light function in the settings. The walkers' stack lights and the EMERGENCY STOP: safety.py.
 Everything configurable is in one JSON file (config.py), which the settings page can download and restore.
 """
 
@@ -1023,6 +1023,7 @@ import collections
 import contextlib
 import fcntl
 import json
+import math
 import os
 import re
 import socket
@@ -1039,20 +1040,20 @@ import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 from nicegui import app, run, ui
 
-from . import cars, health, health_ui, hw, lcfw, lcfw_ui, listen, network_ui, recordings, recordings_ui, theme
+from . import cars, health, health_ui, hw, lcfw, lcfw_ui, listen, network_ui, recordings, recordings_ui, safety, theme
 from .config import (
     BOARD_PINS,
     BUILTIN_FUNCTIONS,
     CHANNELS,
     LAYER_KEYS,
     LAYER_MAX,
-    RELAY_CHANNELS,
     SPEAKERS,
     Config,
     board_defaults,
     diff,
     parse,
 )
+from .config import LEVEL_MAX, TRIM_MAX
 from .intercom import Intercom
 from .sequencer import SIGNALS, Sequencer, signal_pattern
 from .sidecar import Sidecar, V12Engine, find_node
@@ -1552,6 +1553,23 @@ class AudioOut:
             else:
                 self.squeal.trigger()
 
+    def estop(self):
+        """EMERGENCY STOP: power off, speed 0 at once, horn off, the air dump (and the squeal if it was moving)."""
+        with self.lock:
+            moving = self.motor.speed > 0.02
+            self.motor.throttle = self.motor.speed = 0.0
+            self.braking = False
+            self.pattern, self.holders = [], set()
+        if moving:
+            self.squeal.trigger()
+        self.hiss.trigger()
+
+    @property
+    def stopping(self):
+        return self.braking
+
+    ready = True
+
     def set_throttle(self, v):
         v = min(max(float(v), 0.0), 1.0)
         with self.lock:
@@ -1805,6 +1823,7 @@ class Router:
         self.test_env = 0.0
         self.duck = 1.0
         self.recordings = None  # recordings.Player: uploaded recordings, mixed per speaker
+        self.alarm = safety.Alarm(SR, lambda: cfg.data["estop"])  # E-STOP tone: every speaker, after the ducking
         self.dirn = self.prev_dirn = cfg.data.get("direction", "A")  # direction being played, and before a change
         self.xf = self.XFADE
         self.running = False
@@ -1815,6 +1834,10 @@ class Router:
 
     def replan(self):
         self.dirty = True
+
+    def trim(self, key):
+        """A card's level-matching gain, dB (config trim_db, else its default)."""
+        return self.cfg.data.get("trim_db", {}).get(key, hw.default_trim(key))
 
     def set_test(self, device, ch):
         """Tone on (device key, channel) or off (None)."""
@@ -1831,7 +1854,7 @@ class Router:
             if card:
                 key = hw.JACK if card == hw.JACK_CARD else "usb:" + next(p for c, p in usb if c == card)
                 plan.setdefault(key, {"card": card, "outs": []})["outs"].append(
-                    (sp, _mask(s["ch"]), s["level"] / 100))
+                    (sp, _mask(s["ch"]), s["level"] / 100 * 10 ** (self.trim(key) / 20)))
             status[sp] = {"device": s["device"], "key": key, "card": card, "desc": desc,
                           "ok": None if s["device"] == "none" else card is not None}
         if self.test:
@@ -1865,6 +1888,7 @@ class Router:
             d.stop()
         for d in self.devices.values():  # let each player drain and exit
             d.thread.join(timeout=2)
+        self.devices, self.dirty = {}, True  # a restart (tests) opens the cards again
 
     def _tone(self):
         on = self.test is not None and getattr(self, "test_key", None)
@@ -1897,6 +1921,8 @@ class Router:
             g = self.duck + (duck_to - self.duck) * np.minimum((np.arange(BLOCK) + 1) / (0.03 * SR), 1.0)
             self.duck = float(g[-1])
             tone = self._tone()
+            alarm = self.alarm.render(BLOCK)
+            alarm_in = None if alarm is None else alarm * self.cfg.data["estop"].get("inside", 70) / 100
             rec = self.recordings.pull(BLOCK) if self.recordings else {}  # {speaker: (recordings, train gain)}
             test_key = getattr(self, "test_key", None)
             test_mask = _mask(self.test[1]) if self.test else (1.0, 1.0)
@@ -1927,6 +1953,8 @@ class Router:
                     if w is not None and (r0 := cars.role(sp, self.prev_dirn)) != r:
                         sig = sig * w + feed(r0) * (1 - w)
                     sig = sig * gain
+                    if alarm is not None:  # all four speakers, whatever the direction, the duck or their level
+                        sig = sig * 0.5 + (alarm_in if sp.endswith("_int") else alarm)  # train quieter under it
                     frames[:, 0] += sig * mask[0]
                     frames[:, 1] += sig * mask[1]
                 if tone is not None and key == test_key:
@@ -1934,7 +1962,7 @@ class Router:
                     frames[:, 1] += tone * test_mask[1]
                 dev = self.devices.get(key)
                 if dev:
-                    dev.push(frames, t_block)
+                    dev.push(limit(frames), t_block)
             # pace by the inside speaker's card (lowest latency for the intercom), else the jack, else any working
             inside = self.status.get("a_int", {}).get("key") or self.status.get("b_int", {}).get("key")
             cards = [self.devices.get(inside), self.devices.get(hw.JACK), *self.devices.values()]
@@ -1953,32 +1981,43 @@ class Router:
                     clock = time.monotonic()
 
 
+LIMIT_KNEE = 0.8
+
+
+def limit(v):
+    """Soft limiter on a card's output: linear below LIMIT_KNEE of full scale, a tanh knee above it, never past full
+    scale. Speaker levels above 100 % and card trims lean on it instead of clipping."""
+    av = np.abs(v)
+    if av.max(initial=0.0) <= LIMIT_KNEE:
+        return v
+    r = 1 - LIMIT_KNEE
+    return np.where(av <= LIMIT_KNEE, v, np.sign(v) * (LIMIT_KNEE + r * np.tanh((av - LIMIT_KNEE) / r)))
+
+
 def _mask(ch):
     return {"left": (1.0, 0.0), "right": (0.0, 1.0)}.get(ch, (1.0, 1.0))
 
 
 class Io:
-    """Lights: every output (the relay shield's 4 channels, each board's GP0-GP7) is mapped in the config to a
-    light function, or to nothing (then it is switched by hand from the settings page). Functions: manual ones
-    (headlights, markers, interior, your own) are off / on / flash from the engineer page; doors, crossing, horn and
-    bell ones follow the train. Two outputs of a function with different phases (alt) alternate when it flashes, as
-    ditch lights and crossing flashers do. With `horn_flash` the headlights flash while the horn sounds and for a few
-    seconds after. Relays are driven with `pinctrl`, so no GPIO libraries are needed (the user must be in the `gpio`
-    group); boards through their `RemoteBoard`."""
+    """Lights: every output (each board's GP0-GP7) is mapped in the config to a light function, or to nothing (then
+    it is switched by hand from the settings page). Functions: manual ones (interior, stack blue, your own) are
+    off / on / flash from the engineer page; doors, crossing, horn and bell ones follow the train; the car lamps follow
+    the direction (cars.py); the stack lights show walk / slowing / stopped / E-STOP (safety.py). Two outputs of a
+    function with different phases (alt) alternate when it flashes, as ditch lights and crossing flashers do. Boards
+    are driven through their `RemoteBoard`, which also gets the failsafe level of each stack pin: if the Pi stops
+    talking to a board, the board itself turns its stack red on and the other stack colours off."""
 
-    PINS = (4, 22, 6, 26)  # BCM GPIO for relay channels 1-4 (J2-J5 on the shield)
-    ACTIVE_HIGH = True  # the shield energizes a relay when its GPIO is high
     FLASH_HALF = 0.5  # s per side: 60 flashes/min each
     HORN_HOLD = 5.0  # s the headlights keep flashing after the horn stops
     MODES = ("off", "on", "flash")
 
-    def __init__(self, audio, cfg, finder, seq_status=lambda: {}):
-        self.audio, self.cfg, self.finder, self.seq_status = audio, cfg, finder, seq_status
+    def __init__(self, audio, cfg, finder, seq_status=lambda: {}, estop=lambda: False):
+        self.audio, self.cfg, self.finder, self.seq_status, self.estop = audio, cfg, finder, seq_status, estop
         self.modes = {}  # manual function id -> off / on / flash
-        self.manual = {}  # output key -> bool, for unmapped outputs: ("relay", i) or (chip ID, i)
+        self.manual = {}  # output key -> bool, for unmapped outputs: (chip ID, i)
         self.force = set()  # output keys forced on from the settings page (test)
-        self.relay_state = [False] * RELAY_CHANNELS  # relay channels as last written
         self.fn_state = {}  # function id -> (phase A level, phase B level), as last computed
+        self.stack = safety.Stack()
         self.last_horn = -1e9
         self.error = None
         self.running = False
@@ -2013,10 +2052,13 @@ class Io:
 
     def output_cfg(self, key):
         src, i = key
-        if src == "relay":
-            return self.cfg.data["relay"][i]
         board = self.cfg.data["boards"].get(src)
         return board["outputs"][i] if board else {"fn": None, "alt": False}
+
+    def update_stack(self, now):
+        a = self.audio
+        return self.stack.update(now, a.motor.speed, a.motor.throttle, getattr(a, "stopping", False), a.doors,
+                                 getattr(a, "ready", True), self.estop())
 
     def functions_now(self, now):
         """{function id: (phase A on, phase B on)} for this moment."""
@@ -2026,6 +2068,8 @@ class Io:
         phase = int(now / self.FLASH_HALF) % 2 == 0
         seq = self.seq_status()
         crossing = a.busy_pattern == "crossing" or seq.get("phase") == "Crossing"
+        self.update_stack(now)
+        stack = self.stack.lamps(now)
         d = self.cfg.data
         out = {}
         for f in d["functions"]:
@@ -2033,6 +2077,10 @@ class Io:
             if kind in cars.CAR_KINDS:  # headlights, ditch lights, markers: by direction and motion
                 out[fid] = cars.car_light(f, d["direction"], d["lights_on"], now, d["ditch"],
                                           now - self.last_horn < d["ditch"]["hold_s"], crossing)
+                continue
+            if kind == "stack":
+                on = stack.get(f.get("color"), False)
+                out[fid] = (on, on)
                 continue
             if kind == "manual":
                 mode = self.mode(fid)
@@ -2060,27 +2108,24 @@ class Io:
         a, b = fns.get(o["fn"], (False, False))
         return b if o.get("alt") else a
 
+    def failsafe_levels(self, uid):
+        """Per pin of a board, what it does if the Pi stops talking to it: True (on) for stack red, False (off) for
+        the other stack colours, None (the board's own default: off) for everything else."""
+        board = self.cfg.data["boards"].get(uid)
+        if not board:
+            return [None] * REMOTE_PINS
+        kinds = {f["id"]: f for f in self.cfg.data["functions"]}
+        out = []
+        for o in board["outputs"]:
+            f = kinds.get(o.get("fn"))
+            stack = f is not None and (f["kind"] == "stack" or f["id"] == "stack_blue")
+            out.append((f.get("color") == "red") if stack else None)
+        return out
+
     def desired(self, now):
-        """(relay levels, {chip ID: [levels]}) for this moment."""
+        """{chip ID: [levels]} for this moment."""
         fns = self.fn_state = self.functions_now(now)
-        relay = [self.level(("relay", i), fns) for i in range(RELAY_CHANNELS)]
-        boards = {b.uid: [self.level((b.uid, i), fns) for i in range(REMOTE_PINS)] for b in self.finder.found}
-        return relay, boards
-
-    def _pinctrl(self, pins, *opts):
-        if hw.FAKE:  # no Pi: the relays are only shown on the page
-            return
-        r = subprocess.run(["pinctrl", "set", ",".join(map(str, pins)), *opts], capture_output=True, text=True)
-        if r.returncode:
-            raise OSError(r.stderr.strip() or f"pinctrl exited with {r.returncode}")
-
-    def _write(self, want, force=False):
-        changed = [(p, w) for p, w, s in zip(self.PINS, want, self.relay_state, strict=True) if force or w != s]
-        self.relay_state = list(want)
-        for level in (True, False):
-            pins = [p for p, w in changed if w == level]
-            if pins:
-                self._pinctrl(pins, "op", "dh" if level == self.ACTIVE_HIGH else "dl")
+        return {b.uid: [self.level((b.uid, i), fns) for i in range(REMOTE_PINS)] for b in self.finder.found}
 
     def start(self):
         self.running = True
@@ -2091,30 +2136,22 @@ class Io:
         self.running = False
         if self.thread:
             self.thread.join(timeout=2)
-        try:
-            self._write([False] * RELAY_CHANNELS, force=True)
-        except OSError:
-            pass
 
-    def step(self, write_relays=True, force=False):
-        relay, boards = self.desired(time.monotonic())
+    def step(self):
+        boards = self.desired(time.monotonic())
         for b in self.finder.found:
+            b.set_failsafe(self.failsafe_levels(b.uid))
             b.set_want(boards.get(b.uid, [False] * REMOTE_PINS))
-        if write_relays:
-            self._write(relay, force)
 
     def _run(self):
-        force, retry_at = True, 0.0
         while self.running:
-            now = time.monotonic()
             try:
-                self.step(now >= retry_at, force)  # the boards keep updating while the relays are failing
-                if now >= retry_at:
-                    force, self.error = False, None
-            except OSError as e:
+                self.step()
+                self.error = None
+            except Exception as e:  # noqa: BLE001 (a config surprise must not stop the lights thread)
                 if self.error is None:
-                    print(f"caltreat: relay output failed: {e}", file=sys.stderr)
-                self.error, force, retry_at = str(e) or type(e).__name__, True, now + 2.0
+                    print(f"caltreat: lights: {e}", file=sys.stderr)
+                self.error = str(e) or type(e).__name__
             time.sleep(0.05)
 
 
@@ -2199,6 +2236,7 @@ class RemoteBoard:
     IR_FLAGS, IR_FLAG_FAILSAFE = 10, 0x0002
     IR_MAC = 16  # 6 bytes
     HR_PIN_BASE, HR_PIN_STRIDE = 1000, 16
+    HR_DEFAULT_BASE, HR_DEFAULT_STRIDE = 2000, 8  # failsafe / power-on default per pin (RAM; not saved to flash)
     FUNC_OUTPUT, PULL_NONE, DRIVE_4MA, FLAG_SCHMITT, FLAG_LEVEL_HIGH = 2, 0, 1, 0x02, 0x10
 
     @classmethod
@@ -2210,6 +2248,9 @@ class RemoteBoard:
         self.uid = uid
         self.host = host
         self.want = [False] * REMOTE_PINS
+        self.failsafe = [None] * REMOTE_PINS  # per pin: True / False = its level if the Pi stops talking; None = as is
+        self.fs_sent = None  # failsafe levels as written to the board this session
+        self.fs_error = None
         self.mac = None
         self.connected = False
         self.error = None
@@ -2226,6 +2267,39 @@ class RemoteBoard:
                 return
             self.want = levels
         self.wake.set()
+
+    def set_failsafe(self, levels):
+        """Failsafe levels (from `Io`: the stack lights); written to the board when they change."""
+        levels = list(levels)
+        with self.lock:
+            if levels == self.failsafe:
+                return
+            self.failsafe = levels
+        self.wake.set()
+
+    def _write_failsafe(self, conn, levels):
+        """The board's own fallback when the Pi stops talking (heartbeat, disconnect): each listed pin an output at
+        that level. Kept in the board's RAM only (no flash wear); written again on every connection."""
+        for gpio, level in enumerate(levels):
+            if level is None:
+                continue
+            flags = self.FLAG_SCHMITT | (self.FLAG_LEVEL_HIGH if level else 0)
+            conn.write_registers(self.HR_DEFAULT_BASE + self.HR_DEFAULT_STRIDE * gpio,
+                                 [self.FUNC_OUTPUT, self.PULL_NONE, self.DRIVE_4MA, flags, 0, 0, 200])
+
+    def _sync_failsafe(self, conn):
+        with self.lock:
+            fs = list(self.failsafe)
+        if fs == self.fs_sent:
+            return
+        try:
+            self._write_failsafe(conn, fs)
+            self.fs_error = None
+        except ModbusError as e:  # an old firmware without the defaults block: the lights still work
+            if self.fs_error is None:
+                print(f"caltreat: board {self.name}: failsafe levels not written: {e}", file=sys.stderr)
+            self.fs_error = str(e)
+        self.fs_sent = fs
 
     def start(self):
         self.running = True
@@ -2260,6 +2334,8 @@ class RemoteBoard:
             with self.lock:
                 sent = list(self.want)
             self._configure(conn, sent)
+            self.fs_sent = None
+            self._sync_failsafe(conn)
             self.connected, self.error = True, None
             while self.running:
                 self.wake.wait(self.POLL)
@@ -2269,6 +2345,7 @@ class RemoteBoard:
                 if want != sent:
                     conn.write_coils(0, want)
                     sent = want
+                self._sync_failsafe(conn)
                 if conn.read_input(self.IR_FLAGS)[0] & self.IR_FLAG_FAILSAFE:
                     self._configure(conn, want)  # the pins went back to their defaults; set them up again
                     sent = want
@@ -2452,7 +2529,53 @@ def seq_status():
         return sequencer.status()
 
 
-io = Io(audio, cfg, finder, seq_status)
+class EStop:
+    """EMERGENCY STOP, latched: the train stops at once (speed 0), sequences / auto run / horn patterns / bell /
+    recordings stop, the alarm sounds on every speaker and the stack lights flash red. While latched, power, Depart,
+    Auto run and closing the doors are refused (opening them still works) until the engineer resets it."""
+
+    def __init__(self):
+        self.latched = False
+        self.since = 0.0
+        self.count = 0  # activations since start (the pages show a fresh banner per activation)
+
+    def trigger(self):
+        with seq_lock:
+            first = not self.latched
+            self.latched, self.count = True, self.count + (1 if first else 0)
+            if first:
+                self.since = time.monotonic()
+            sequencer.cancel()
+            audio.estop()
+            audio.set_bell(False)
+        rec_player.stop_all()
+        router.alarm.start()
+        io.step()  # the stack lights now, not at the lights thread's next step
+        if first:
+            print("caltreat: EMERGENCY STOP", file=sys.stderr)
+
+    def reset(self):
+        if not self.latched:
+            return
+        self.latched = False
+        router.alarm.stop()
+        print("caltreat: emergency stop reset", file=sys.stderr)
+
+    def blocks(self, a, v):
+        """A press refused while latched."""
+        if not self.latched:
+            return False
+        if a == "throttle":
+            return float(v or 0) > 0
+        if a == "seq":
+            return True  # Depart, Arrive, Crossing, Auto run: they move the train or its doors
+        if a == "door":
+            return bool(v) and audio.doors in ("open", "opening")  # closing is refused; opening still works
+        return False
+
+
+estop = EStop()
+io = Io(audio, cfg, finder, seq_status, lambda: estop.latched)
 
 
 def apply_config():
@@ -2484,13 +2607,16 @@ def engine_status():
     return False, "sound engine starting…"
 
 
+def card_list(usb=None):
+    """[(device key, label, ALSA card)]: the jack and each USB card, by port."""
+    usb = hw.usb_outputs() if usb is None else usb
+    return [(hw.JACK, "3.5 mm jack", hw.JACK_CARD), *[(f"usb:{p}", f"USB {p} · {c}", c) for c, p in usb]]
+
+
 def apply_volumes():
-    """The ALSA card volumes kept in the config (unset ones are left alone)."""
-    usb = hw.usb_outputs()
-    for dev, pct in cfg.data["volumes"].items():
-        card, _ = hw.resolve(dev, usb)
-        if card:
-            hw.set_volume(pct, card, hw.mixer_control(card))
+    """Every card's ALSA volume to its dB in the config (unset: hw.DEFAULT_DB, full scale)."""
+    for dev, _, card in card_list():
+        hw.set_volume_db(cfg.data["card_db"].get(dev, hw.DEFAULT_DB), card, hw.mixer_control(card))
 
 
 cfg.on_change(apply_config)
@@ -2674,18 +2800,32 @@ def engineer_html():
         f'<button class="pat" data-k="{k}" title="{_esc(rule)} (key {i + 1})" aria-label="{_esc(label)} horn signal">'
         f'<code>{SIG_TXT.get(k, sig)}</code><b>{_esc(label)}</b></button>'
         for i, (k, label, sig, rule) in enumerate(HORN_SIGNALS))
+    def light_title(f):
+        if f["id"] == "stack_blue":
+            return "Blue: unassigned (stack light). Tap off / on / flash"
+        return f'{f["name"]}: tap off / on / flash{" (L)" if f["id"] == "head" else " (M)" if f["id"] == "markers" else ""}'
+
+    def light_cls(f):
+        return " red" if f["id"] == "markers" else " blue" if f["id"] == "stack_blue" else ""
+
     lights = "".join(
-        f'<button class="lt{" red" if f["id"] == "markers" else ""}" id="lt_{f["id"]}" data-f="{f["id"]}" '
-        f'title="{_esc(f["name"])}: tap off / on / flash{" (L)" if f["id"] == "head" else " (M)" if f["id"] == "markers" else ""}">'
+        f'<button class="lt{light_cls(f)}" id="lt_{f["id"]}" data-f="{f["id"]}" title="{_esc(light_title(f))}">'
         f'<i aria-hidden="true">{_esc(f.get("symbol") or "●")}</i><b>{_esc(f["name"])}</b><small></small></button>'
         for f in cfg.data["functions"] if f["kind"] == "manual")
     return f"""
+<div class="esban" id="esBan" role="alert" hidden>
+  <b>&#x25A0; E-STOP</b><span title="Power, Depart, Auto run and closing the doors are locked until reset">&#x25B2; &#x2715;</span>
+  <button type="button" id="esReset" title="Reset the emergency stop (or hold E-STOP 2 s)" aria-label="Reset emergency stop">&#x21BA;</button>
+</div>
 <main class="desk">
   <header>
     <div class="mark"><b>KISS</b><span>Caltreat · cab</span></div>
     <div class="hd-right"><div class="chip" id="status">…</div>
       <a class="iconbtn" href="/settings" title="Settings: mix, speakers, lights, intercom, backup" aria-label="Settings">{ICON_GEAR}</a></div>
   </header>
+  <button class="estop" id="estop" type="button" aria-label="Emergency stop: hold"
+    title="EMERGENCY STOP (hold E): hold 0.3 s. Stops the train at once, alarm on all speakers, stack lights flash red. Latched until reset: hold 2 s or ↺">
+    <i class="fill" aria-hidden="true"></i><b>E-STOP</b><span id="esHint">hold</span></button>
   <section class="lcd" aria-label="Cab display">
     <div class="k">Speed</div><div class="k">Inverter</div>
     <div class="lamps">
@@ -2696,6 +2836,8 @@ def engineer_html():
     </div>
     <div class="v"><span id="mph">0</span><small>mph</small></div>
     <div class="v"><span id="hz">0</span><small>Hz</small></div>
+    <div class="stack" id="stack" data-s="red" title="Stack lights (walkers): green walk · yellow slowing · red stopped · red flashing E-STOP · blue unassigned">
+      <i class="b"></i><i class="r"></i><i class="y"></i><i class="g"></i></div>
   </section>
   {REVERSER}
   <section class="seqs" aria-label="Sequences">
@@ -2741,7 +2883,7 @@ def engineer_html():
     <div class="lights">{LIGHTS_MASTER}{lights}</div>
   </section>
   <footer class="foot">
-    <p class="keys">Keys: <kbd>G</kbd> depart · <kbd>R</kbd> arrive · <kbd>X</kbd> crossing · <kbd>U</kbd> auto run · <kbd>Esc</kbd> stop sequence · <kbd>Space</kbd> horn (hold) · <kbd>T</kbd> talk (hold) · <kbd>B</kbd> bell · <kbd>D</kbd> doors · <kbd>A</kbd> air · <kbd>S</kbd> stop · <kbd>↑</kbd><kbd>↓</kbd> power · <kbd>0</kbd> power off · <kbd>1</kbd>–<kbd>9</kbd> horn signals · <kbd>L</kbd> headlights · <kbd>M</kbd> markers</p>
+    <p class="keys">Keys: <kbd>G</kbd> depart · <kbd>R</kbd> arrive · <kbd>X</kbd> crossing · <kbd>U</kbd> auto run · <kbd>Esc</kbd> stop sequence · <kbd>Space</kbd> horn (hold) · <kbd>T</kbd> talk (hold) · <kbd>B</kbd> bell · <kbd>D</kbd> doors · <kbd>A</kbd> air · <kbd>S</kbd> stop · <kbd>↑</kbd><kbd>↓</kbd> power · <kbd>0</kbd> power off · <kbd>1</kbd>–<kbd>9</kbd> horn signals · <kbd>L</kbd> headlights · <kbd>M</kbd> markers · <kbd>E</kbd> E-STOP (hold)</p>
   </footer>
 </main>"""
 
@@ -2750,7 +2892,7 @@ def errors():
     ok, note = engine_status()
     errs = [] if ok else [note]
     errs += [f"Speaker {k}: {d.error}" for k, d in router.devices.items() if d.error]
-    errs += [f"Relays: {io.error}" if io.error else "", router.error or "", cfg.error or ""]
+    errs += [f"Lights: {io.error}" if io.error else "", router.error or "", cfg.error or ""]
     errs += [f"Board {b.name} ({b.host}): {b.error}" for b in finder.found if b.error and not b.connected]
     return " · ".join(e for e in errs if e)
 
@@ -2793,6 +2935,8 @@ def engine_state(who):
         "talk": talk, "err": errors(),
         "dir": cfg.data["direction"], "dirRefused": time.monotonic() - dir_refused[0] < 2.5,
         "lightsOn": cfg.data["lights_on"],
+        "stack": io.stack.state, "blue": io.mode("stack_blue"),
+        "estop": estop.count if estop.latched else 0,
     }
 
 
@@ -2804,7 +2948,17 @@ def set_timing(mode):
 
 def act(who, a, v):
     """One press on the engineer page."""
+    if a == "estop":
+        estop.trigger()
+        return
+    if a == "estop_reset":
+        estop.reset()
+        return
     with seq_lock:
+        if estop.blocks(a, v):
+            if a == "throttle":
+                audio.set_throttle(0.0)
+            return
         if a == "horn":
             if v:
                 sequencer.manual("horn")
@@ -2862,7 +3016,8 @@ async def engineer(client):
     page_head("Caltreat")
     who = client.id
     ui.add_head_html('<script src="/static/cab.js"></script><script src="/static/cars.js"></script>'
-                     '<link rel="stylesheet" href="/static/cars.css">')
+                     '<script src="/static/estop.js"></script><link rel="stylesheet" href="/static/cars.css">'
+                     '<link rel="stylesheet" href="/static/estop.css">')
     ui.html(engineer_html(), sanitize=False).classes("w-full")
     recordings_ui.engineer(recs, rec_player)  # pinned recordings
     ui.on("ct", lambda e: act(who, (e.args or {}).get("a"), (e.args or {}).get("v")))
@@ -2913,10 +3068,16 @@ def select(options, value, on_change, title=None, cls="sel"):
     return s
 
 
-def slider(label, lo, hi, value, on_change, title=None, unit="%", step=1):
+def _db(v):
+    return f"{float(v):+.1f}\u00a0dB".replace("-", "−")  # no break before dB
+
+
+def slider(label, lo, hi, value, on_change, title=None, unit="%", step=1, fmt=None):
+    """fmt: value -> the text shown (default "<value> <unit>")."""
+    fmt = fmt or (lambda v: f"{v} {unit}")
     with el("label", "lbl", title=title):
         ui.html(_esc(label), sanitize=False, tag="span")
-        out = ui.html(f"{value} {unit}", sanitize=False, tag="output")
+        out = ui.html(_esc(fmt(value)), sanitize=False, tag="output")
     r = el("input", "", type="range", min=lo, max=hi, step=step, value=value)
     r.props(f'aria-label="{_esc(label)}"')
 
@@ -2932,12 +3093,13 @@ def slider(label, lo, hi, value, on_change, title=None, unit="%", step=1):
         keep(v)
         v = float(v)
         v = int(v) if float(step).is_integer() else v
-        out.set_content(f"{v} {unit}")
+        out.set_content(_esc(fmt(v)))
         on_change(v)
 
     def moved(v):
         keep(v)
-        out.set_content(f"{v} {unit}")
+        v = float(v)
+        out.set_content(_esc(fmt(int(v) if float(step).is_integer() else v)))
 
     r.on("input", lambda e: moved(e.args), js_handler=f"(e) => {{ {keep_js}emit(e.target.value) }}")
     r.on("change", lambda e: changed(e.args), js_handler=f"(e) => {{ {keep_js}emit(e.target.value) }}")
@@ -2955,7 +3117,8 @@ def device_options():
 CH_LABEL = {"both": "L+R", "left": "L", "right": "R"}
 ROLE_SYM = {"front": "▲ front", "inside": "▣ inside", "rear": "▼ rear"}  # what a speaker plays now
 KIND_LABEL = {"manual": "manual (engineer page)", "doors": "doors open / moving", "crossing": "crossing signal",
-              "horn": "while the horn sounds", "bell": "while the bell rings", **cars.KIND_LABEL}
+              "horn": "while the horn sounds", "bell": "while the bell rings",
+              "stack": "stack light: green walk, yellow slowing, red stopped, red flashing E-STOP", **cars.KIND_LABEL}
 
 
 def save():
@@ -3074,6 +3237,11 @@ def save_door_file(name, data):
 async def settings(client):
     page_head("Caltreat settings")
     live = []  # (callable) run every 0.5 s to show live state
+    ui.add_head_html('<link rel="stylesheet" href="/static/estop.css">')
+    with el("div", "esban set hidden") as ban:  # every browser: the latched emergency stop
+        ui.html("<b>&#x25A0; E-STOP</b>", sanitize=False, tag="span")
+        sbtn("↺", estop.reset, "Reset the emergency stop")
+    ui.timer(0.3, lambda: ban.classes(replace="esban set" if estop.latched else "esban set hidden"))
 
     def download():
         ui.download.content(cfg.export().encode(), "caltreat-config.json", "application/json")
@@ -3197,8 +3365,10 @@ async def settings(client):
                                        lambda v, sp=sp: (d["speakers"][sp].__setitem__("ch", v), save()),
                                        "Channel", "sel narrow")
                                 tb = sbtn("▶", lambda sp=sp: test_speaker(sp), "Test tone on this speaker")
-                            slider("Level", 0, 100, s["level"],
-                                   lambda v, sp=sp: (d["speakers"][sp].__setitem__("level", v), save()))
+                            slider("Level", 0, LEVEL_MAX, s["level"],
+                                   lambda v, sp=sp: (d["speakers"][sp].__setitem__("level", v), save()),
+                                   "Speaker level: 100 % = full scale, up to 400 % (+12 dB; loud parts are softly "
+                                   "limited)", fmt=lambda v: f"{v} %\n{_db(20 * math.log10(v / 100)) if v else 'off'}")
 
                             def show(st=st, tb=tb, sp=sp):
                                 r = router.status.get(sp, {})
@@ -3211,17 +3381,26 @@ async def settings(client):
                                     and router.test[1] == d["speakers"][sp]["ch"]
                                 tb.classes(replace="sbtn on" if on else "sbtn")
                             live.append(show)
-                el("h2", "", "Card volume", "The sound cards' own volume (ALSA mixer); kept in the settings")
+                el("h2", "", "Card volume", "Each sound card's own volume (ALSA mixer), dB; 0 dB = full scale. "
+                                            "Trim: extra gain in the app so the same level sounds the same on any "
+                                            "card (the 3.5 mm jack is about 9 dB quieter than a USB DAC: an "
+                                            "estimate, set it by ear)")
                 usb = hw.usb_outputs()
-                for dev, label, card in [("jack", "3.5 mm jack", hw.JACK_CARD),
-                                         *[(f"usb:{p}", f"USB {p} · {c}", c) for c, p in usb]]:
-                    cur = d["volumes"].get(dev, hw.get_volume(card, hw.mixer_control(card)))
+                for dev, label, card in card_list(usb):
+                    ctl = hw.mixer_control(card)
+                    lo, hi = hw.db_range(card, ctl)
+                    cur = min(hi, max(lo, d["card_db"].get(dev, hw.DEFAULT_DB)))
 
-                    def setv(v, dev=dev, card=card):
-                        hw.set_volume(v, card, hw.mixer_control(card))
-                        d["volumes"][dev] = v
+                    def setv(v, dev=dev, card=card, ctl=ctl, rng=(lo, hi)):
+                        d["card_db"][dev] = hw.set_volume_db(v, card, ctl, rng)
                         save()
-                    slider(label, 0, 100, cur, setv)
+                    slider(f"{label} volume", max(lo, -60), min(hi, 0), round(cur * 2) / 2, setv,
+                           f"ALSA {ctl}: {lo:g} to {hi:g} dB", unit="dB", step=0.5, fmt=_db)
+                    slider(f"{label} trim", -TRIM_MAX, TRIM_MAX,
+                           d["trim_db"].get(dev, hw.default_trim(dev)),
+                           lambda v, dev=dev: (d["trim_db"].__setitem__(dev, v), save()),
+                           f"Level matching gain for this card (default {hw.default_trim(dev):+g} dB)", unit="dB",
+                           step=0.5, fmt=_db)
                 el("h2", "", "Channel test", "440 Hz on one channel of one card, whatever is mapped to it")
                 if not usb:
                     el("div", "mapdia", "No USB sound cards found")
@@ -3274,8 +3453,7 @@ async def settings(client):
                                   "By hand: switch on / off. Mapped: force on as a test (tap again to release)")
 
                 def show():
-                    on = (io.relay_state[key[1]] if key[0] == "relay" else
-                          next((b.want[key[1]] for b in finder.found if b.uid == key[0]), False))
+                    on = next((b.want[key[1]] for b in finder.found if b.uid == key[0]), False)
                     lamp.classes(replace="lampdot on" if on else "lampdot")
                     forced = key in io.force or (not io.mapped(key) and io.manual.get(key))
                     tb.classes(replace="sbtn on" if forced else "sbtn")
@@ -3289,14 +3467,15 @@ async def settings(client):
                 el("h2", "", "Light functions", "What the engineer page and the sequences switch. Map outputs to "
                                                 "them below. ＋ adds your own (switched off / on / flash from the "
                                                 "engineer page)")
+                if cfg.notes:
+                    el("div", "mapdia", _esc(" · ".join(cfg.notes)), "What the update from the relay shield moved")
                 with el("div", "rows"):
                     for f in d["functions"]:
                         with el("div", "srow"):
                             el("div", "nm", f"{_esc(f.get('symbol', ''))} {_esc(f['name'])}", KIND_LABEL[f["kind"]])
                             with el("div", "ctlz"):
                                 lamp = el("i", "lampdot white", title="Live")
-                                outs = [f"R{i + 1}" for i, o in enumerate(d["relay"]) if o["fn"] == f["id"]]
-                                outs += [f"{b['name']}:GP{i}" for b in d["boards"].values()
+                                outs = [f"{b['name']}:GP{i}" for b in d["boards"].values()
                                          for i, o in enumerate(b["outputs"]) if o["fn"] == f["id"]]
                                 el("span", "st", _esc(" ".join(outs)) or "—", "Outputs mapped to it")
                                 if f["kind"] == "manual":
@@ -3336,11 +3515,21 @@ async def settings(client):
                        "past the crossing)", "s")
 
             with el("section", "ctl set"):
-                el("h2", "", "Relay shield", "The Pi's 4-channel relay shield (BCM GPIO 4, 22, 6, 26)")
-                with el("div", "rows"):
-                    for i, o in enumerate(d["relay"]):
-                        out_row(("relay", i), f"R{i + 1}", f"GPIO{Io.PINS[i]}", o,
-                                lambda field, v, o=o: remap(o, field, v))
+                el("h2", "", "E-STOP", "Emergency stop alarm: a 1 kHz / 800 Hz two-tone on all four speakers "
+                                       "(over everything, whatever the direction), loud first, then a quieter "
+                                       "burst every 3 s until reset")
+                es = d["estop"]
+                slider("Alarm", 0, 100, es["level"], lambda v: (es.__setitem__("level", v), save()),
+                       "Level of the alarm for the first seconds")
+                slider("Loud for", 1, 30, es["loud_s"], lambda v: (es.__setitem__("loud_s", int(v)), save()),
+                       "How long the alarm stays loud", "s")
+                slider("Then", 0, 100, es["quiet"], lambda v: (es.__setitem__("quiet", v), save()),
+                       "Level of the bursts while the E-STOP stays latched")
+                slider("Inside", 0, 100, es["inside"], lambda v: (es.__setitem__("inside", v), save()),
+                       "The interior speakers get this much of the alarm (people stand close to them)")
+                with el("div", "ctlz"):
+                    sbtn("▶", lambda: router.alarm.test(2.0), "Test: 2 s of the alarm on all speakers (does not "
+                                                              "stop the train)")
 
             with el("section", "ctl set"):
                 el("h2", "", "Lighting controllers", "CalTreat lighting controller boards on the wired network "
@@ -3404,7 +3593,7 @@ async def settings(client):
 
     def delete_fn(fid):
         d = cfg.data
-        for o in [*d["relay"], *[o for b in d["boards"].values() for o in b["outputs"]]]:
+        for o in [o for b in d["boards"].values() for o in b["outputs"]]:
             if o["fn"] == fid:
                 o["fn"] = None
         d["functions"] = [f for f in d["functions"] if f["id"] != fid]

@@ -217,7 +217,7 @@ body { font: 15px/1.45 var(--body) !important; }
 .sel { min-width: 0; flex: 1 1 150px; font: 500 15px var(--body); background: var(--bezel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 9px 8px; height: 40px; }
 .sel.narrow { flex: 0 0 auto; width: auto; }
 .lbl { font: 600 12px/1 var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; justify-content: space-between; margin-top: 6px; }
-.lbl output { color: var(--ink); font-family: var(--mono); letter-spacing: 0; }
+.lbl output { color: var(--ink); font-family: var(--mono); letter-spacing: 0; text-transform: none; white-space: pre-line; text-align: right; }
 .ctl input[type=range] { height: 40px; }
 .mapdia { font: 500 12px/1.4 var(--mono); color: var(--muted); }
 .boardhd { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
