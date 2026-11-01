@@ -263,7 +263,17 @@ http://10.42.0.1/). If the phone says the Wi-Fi has no internet, choose to
 stay connected (or turn off mobile data for a moment). caltreat.local works by
 mDNS, and on Caltreat Cab also by its DNS for phones without mDNS.
 
-Settings → Network shows both Wi-Fis, the wired network and the ports.
+Settings → Network shows both Wi-Fis, the wired network and the ports, and
+has one switch: **Join caltreat** ● on / ○ off. Off = access point only: the
+Pi stops joining the caltreat Wi-Fi and only serves Caltreat Cab, which is the
+most stable on the built-in Wi-Fi's one radio (no scans or roams taking the
+radio from the phones, no access point channel moves). It stays off after a
+reboot. A laptop on the caltreat Wi-Fi then loses its connection to the Pi:
+join Caltreat Cab or use the ethernet cable (deploys too:
+`CALTREAT_HOST=caltreat@10.42.0.1 pi/deploy.sh`). The switch needs the setup
+script once (it installs `caltreat-sta@on/off.service` and a polkit rule that
+lets the app's user start those two units and nothing else); until then it is
+greyed out. On the Pi by hand: `sudo systemctl start caltreat-sta@off` / `@on`.
 
 A USB Wi-Fi adapter for the access point is more robust (its own radio, any
 channel): plug it in and run the setup with `AP_IFACE=wlan1`. With the built-in

@@ -1,0 +1,9 @@
+# Installed by pi/setup/network.sh: the Wi-Fi client on (caltreat-sta@on) or off (caltreat-sta@off, access point
+# only). The app's user may start these two and nothing else (/etc/polkit-1/rules.d/50-caltreat-sta.rules).
+[Unit]
+Description=Caltreat Wi-Fi client %i
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/caltreat-sta %i
