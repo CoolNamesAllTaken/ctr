@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 const TABS = [
   { href: "/employee/live", label: "Live" },
   // Hidden from the tab bar; the pages still exist and are reachable by URL.
-  // { href: "/employee", label: "Trains" },
+  { href: "/employee", label: "Trains" },
   { href: "/employee/stations", label: "Stations & kiosks" },
   { href: "/employee/cards", label: "Chipper cards" },
   { href: "/employee/alerts", label: "Alerts & delays" },
