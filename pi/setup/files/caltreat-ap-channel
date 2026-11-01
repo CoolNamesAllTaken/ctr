@@ -7,7 +7,9 @@
 # A running access point is restarted only when it must move: never while it is up on the right channel. While
 # wlan0 is not joined, a move waits until the network is seen on the same channel twice in a row (a minute apart)
 # and happens at most every 5 minutes, so a flickering Wi-Fi doesn't drop every phone each minute.
-# It also brings the access point back up if it is down, and turns Wi-Fi power saving off (wlan0 and uap0). Runs from the NetworkManager dispatcher (wlan0 up/down)
+# It also brings the access point back up if it is down, and turns Wi-Fi power saving off (wlan0 and uap0).
+# Access point only (the client turned off on the settings page, /etc/caltreat/sta-off): no moves at all; the access
+# point keeps its channel (6 or the last one it followed, never a radar channel) and is only started if it is down. Runs from the NetworkManager dispatcher (wlan0 up/down)
 # and from caltreat-ap-channel.timer (every minute). Installed by pi/setup/network.sh.
 #
 # --restart: restart the access point even if its channel is right and it is up, so changed settings (a new
@@ -36,7 +38,9 @@ fi
 
 target=""
 joined=""
-if [[ "$SHARED_RADIO" == 1 ]]; then
+ap_only=""  # the Wi-Fi client is turned off (caltreat-sta off): the access point stays where it is, never moved
+[[ -e "${CALTREAT_STA_OFF:-/etc/caltreat/sta-off}" ]] && ap_only=1
+if [[ "$SHARED_RADIO" == 1 && -z "$ap_only" ]]; then
   if iw dev "$STA_IFACE" link 2>/dev/null | grep -q '^Connected'; then
     joined=1
     target="$(iw dev "$STA_IFACE" info | awk '$1 == "channel" { print $2; exit }')"

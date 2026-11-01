@@ -95,3 +95,54 @@ def test_no_networkmanager():
     assert s["nm"] is False
     assert network_ui.lines(s, {})[0][2] is False
     assert network_ui.lines(None, {})[0][1] == "…"
+
+
+def test_join_switch_state_and_rows(monkeypatch, tmp_path):
+    """The Join switch: disabled without the setup's rule, off = access point only (row + button)."""
+    monkeypatch.setattr(network, "CONF", tmp_path / "network.conf")
+    monkeypatch.setattr(network, "STA_OFF", tmp_path / "sta-off")
+    monkeypatch.setattr(network, "STA_UNIT", tmp_path / "caltreat-sta@.service")
+    (tmp_path / "network.conf").write_text("AP_SSID=Caltreat\\ Cab\nSTA_TOGGLE=0\n")
+    table = {("nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"):
+             "wlan0:wifi:connected:caltreat-sta\nuap0:wifi:connected:caltreat-ap\n"}
+    s = network.status(fake_run(table))
+    assert s["sta"]["toggle"] is False and s["sta"]["off"] is False
+    text, cls, tip, enabled = network_ui.switch_state(s)
+    assert text == "● on" and not enabled and "sudo ~/caltreat/setup/network.sh" in tip
+
+    (tmp_path / "network.conf").write_text("AP_SSID=Caltreat\\ Cab\nSTA_TOGGLE=1\n")
+    s = network.status(fake_run(table))
+    assert s["sta"]["toggle"] is False  # the rule's unit isn't there
+    (tmp_path / "caltreat-sta@.service").write_text("[Service]\n")
+    s = network.status(fake_run(table))
+    text, cls, tip, enabled = network_ui.switch_state(s)
+    assert s["sta"]["toggle"] and enabled and text == "● on" and cls == "sbtn on"
+    assert "access point only" in tip and "Caltreat Cab" in tip and "ethernet" in tip
+    assert network_ui.switch_state(s, busy=True)[3] is False
+
+    (tmp_path / "sta-off").write_text("off\n")
+    table[("nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status")] = \
+        "wlan0:wifi:disconnected:\nuap0:wifi:connected:caltreat-ap\n"
+    s = network.status(fake_run(table))
+    rows = network_ui.lines(s, {8080: ""})
+    assert rows[0][:3] == ("Joins", "off: access point only (not joining “caltreat”)", True)
+    text, cls, tip, enabled = network_ui.switch_state(s)
+    assert text == "○ off" and enabled and tip.startswith("Turn on")
+
+
+def test_set_sta_runs_only_the_two_units():
+    calls = []
+
+    class R:
+        def __init__(self, code, err=""):
+            self.returncode, self.stderr, self.stdout = code, err, ""
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return R(0)
+    assert network.set_sta(False, run) == (True, "access point only")
+    assert network.set_sta(True, run) == (True, "joining")
+    assert calls == [["systemctl", "--no-ask-password", "start", "caltreat-sta@off.service"],
+                     ["systemctl", "--no-ask-password", "start", "caltreat-sta@on.service"]]
+    ok, msg = network.set_sta(False, lambda cmd, **kw: R(1, "Failed to start caltreat-sta@off.service: Access denied"))
+    assert not ok and "Access denied" in msg and "setup/network.sh" in msg

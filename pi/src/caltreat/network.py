@@ -3,6 +3,10 @@ its own Wi-Fi for phones (uap0, "Caltreat Cab") and the boards' wired network (e
 script's /etc/caltreat/network.conf (pi/setup/network.sh) when it's there.
 
     network.status()  # {"nm": bool, "sta": {...}, "ap": {...}, "boards": {...}}
+    network.set_sta(False)  # the Wi-Fi client off (access point only) / on: through caltreat-sta@off/on.service
+
+The one thing the page may change is whether the Pi joins its Wi-Fi: the setup script installs caltreat-sta@.service
+(root) and a polkit rule that lets the app's user start caltreat-sta@on / caltreat-sta@off and nothing else.
 """
 
 import os
@@ -12,15 +16,18 @@ import time
 from pathlib import Path
 
 CONF = Path(os.environ.get("CALTREAT_NETWORK_CONF", "/etc/caltreat/network.conf"))
+STA_OFF = Path(os.environ.get("CALTREAT_STA_OFF", "/etc/caltreat/sta-off"))  # written by caltreat-sta off
+STA_UNIT = Path(os.environ.get("CALTREAT_STA_UNIT", "/etc/systemd/system/caltreat-sta@.service"))
+SETUP = "sudo ~/caltreat/setup/network.sh"
 DEFAULTS = {"STA_IFACE": "wlan0", "STA_SSID": "caltreat", "AP_IFACE": "uap0", "AP_CON": "caltreat-ap",
             "AP_SSID": "Caltreat Cab", "AP_IP": "10.42.0.1", "BOARD_IFACE": "eth0"}
 
 
-def read_conf(path=CONF):
+def read_conf(path=None):
     """network.conf (shell variables, values maybe quoted by printf %q) over the defaults."""
     out = dict(DEFAULTS)
     try:
-        text = Path(path).read_text()
+        text = Path(path or CONF).read_text()
     except OSError:
         return out
     for line in text.splitlines():
@@ -116,6 +123,8 @@ def status(run=_run):
 
     sta = dev(c["STA_IFACE"])
     sta["want"] = c["STA_SSID"]
+    sta["off"] = STA_OFF.exists()  # turned off on this page: access point only
+    sta["toggle"] = can_toggle(c)
     if sta["state"].startswith("connected"):
         sta.update(parse_wifi_list(run("nmcli", "-t", "-f", "ACTIVE,SIGNAL,CHAN,SSID", "device", "wifi", "list",
                                        "ifname", c["STA_IFACE"], "--rescan", "no") or "") or {})
@@ -128,6 +137,28 @@ def status(run=_run):
     ap["setup"] = CONF.exists()
     boards = dev(c["BOARD_IFACE"])
     return {"nm": True, "sta": sta, "ap": ap, "boards": boards, "conf": c, "time": time.time()}
+
+
+def can_toggle(c=None):
+    """The setup script installed the switch (its unit, and the polkit rule for this user: STA_TOGGLE=1)."""
+    c = c or read_conf()
+    return c.get("STA_TOGGLE") == "1" and STA_UNIT.exists()
+
+
+def set_sta(on, run=subprocess.run):
+    """Turn the Wi-Fi client on (join, autoconnect) or off (down, no autoconnect: access point only, also after a
+    reboot). Blocks up to ~40 s (joining): call it off the asyncio loop. (ok, message)."""
+    unit = f"caltreat-sta@{'on' if on else 'off'}.service"
+    try:
+        r = run(["systemctl", "--no-ask-password", "start", unit], capture_output=True, text=True, timeout=45)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, f"{unit}: {e}"
+    finally:
+        _cache["v"] = None  # show the new state at once
+    if r.returncode != 0:
+        why = (r.stderr or r.stdout).strip().splitlines()
+        return False, (why[-1] if why else f"{unit} failed") + f" (needs the setup: {SETUP})"
+    return True, "joining" if on else "access point only"
 
 
 _cache = {"t": 0.0, "v": None}
