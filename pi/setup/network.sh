@@ -18,6 +18,8 @@
 #  4. Sound priority: lets the app (a user service) run its sound threads, aplay and the sound engine at a higher
 #     priority than its web pages (LimitNICE for the app user's services; takes effect after a reboot).
 #  Wi-Fi power saving is turned off (it makes the shared radio drop frames and adds latency spikes).
+#  5. The settings page's "Join caltreat" switch: the app's user may turn the Wi-Fi client on / off (access point
+#     only) through caltreat-sta@on/off.service (a polkit rule allows starting those two units, nothing else).
 # The wired network for the lighting controllers (eth0, 192.168.50.1) is left alone.
 #
 # Settings (environment, or asked for when missing):
@@ -69,6 +71,9 @@ NMCONF_FILE="$NMDIR/conf.d/90-caltreat.conf"
 DISPATCH_FILE="$NMDIR/dispatcher.d/90-caltreat-ap"
 SBIN="$ROOT/usr/local/sbin"
 UNITS="$ROOT/etc/systemd/system"
+STA_OFF_FILE="$ROOT/etc/caltreat/sta-off"  # the Wi-Fi client is turned off (access point only): caltreat-sta
+STA_UNIT="$UNITS/caltreat-sta@.service"
+POLKIT_FILE="$ROOT/etc/polkit-1/rules.d/50-caltreat-sta.rules"
 PRIO_FILE=""
 [[ -n "$APP_UID" ]] && PRIO_FILE="$UNITS/user@$APP_UID.service.d/90-caltreat-sound.conf"
 
@@ -144,7 +149,7 @@ ask() {  # ask VAR "prompt" [silent]
   printf -v "$1" '%s' "$reply"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
-template() { sed -e "s/@STA_IFACE@/$STA_IFACE/g" -e "s/@AP_IFACE@/$AP_IFACE/g" "$HERE/files/$1"; }
+template() { sed -e "s/@STA_IFACE@/$STA_IFACE/g" -e "s/@AP_IFACE@/$AP_IFACE/g" -e "s/@APP_USER@/$APP_USER/g" "$HERE/files/$1"; }
 
 if ((!DRY)) && [[ -z "$ROOT" && $EUID -ne 0 ]]; then
   echo "Run it with sudo: sudo $0 $*  (or --dry-run to see what it would do)" >&2
@@ -162,6 +167,11 @@ if ((UNDO)); then
     run nmcli connection delete "$AP_CON"
   fi
   del_file "$AP_FILE"
+  if [[ -e "$STA_OFF_FILE" ]]; then  # the Wi-Fi client was switched off from the settings page: back on
+    old_sta="$(sed -n 's/^STA_CON=//p' "$CONF_FILE" 2>/dev/null | head -n 1)"
+    if have nmcli; then run nmcli connection modify "${old_sta:-$STA_CON}" connection.autoconnect yes || true; fi
+    del_file "$STA_OFF_FILE"
+  fi
   if have systemctl; then
     for u in caltreat-ap-channel.timer caltreat-ap-channel.service caltreat-uap0.service; do
       if [[ -e "$UNITS/$u" ]]; then run systemctl disable --now "$u" || true; fi
@@ -169,7 +179,8 @@ if ((UNDO)); then
   fi
   for f in "$UNITS/caltreat-ap-channel.timer" "$UNITS/caltreat-ap-channel.service" "$UNITS/caltreat-uap0.service" \
     "$SBIN/caltreat-ap-channel" "$SBIN/caltreat-uap0" "$DISPATCH_FILE" "$DNSMASQ_FILE" "$NMCONF_FILE" \
-    "$HOSTS_FILE" "$CONF_FILE" "$SYSCTL_FILE" ${PRIO_FILE:+"$PRIO_FILE"}; do
+    "$HOSTS_FILE" "$CONF_FILE" "$SYSCTL_FILE" "$SBIN/caltreat-sta" "$STA_UNIT" "$POLKIT_FILE" \
+    ${PRIO_FILE:+"$PRIO_FILE"}; do
     del_file "$f"
   done
   if [[ -e $SYS/class/net/uap0 && "$AP_IFACE" == uap0 ]] && have iw; then run iw dev uap0 del || true; fi
@@ -301,14 +312,22 @@ AP_CON=$AP_CON
 AP_SSID=$(printf '%q' "$AP_SSID")
 AP_IP=$AP_IP
 SHARED_RADIO=$SHARED_RADIO
+STA_CON=$(printf '%q' "${sta_con:-$STA_CON}")
+# 1: the settings page may turn the Wi-Fi client on / off (caltreat-sta@on/off.service, polkit rule for $APP_USER)
+STA_TOGGLE=$([[ -n "$APP_UID" ]] && echo 1 || echo 0)
 EOF
+STA_AUTO=yes
+if [[ -e "$STA_OFF_FILE" ]]; then
+  STA_AUTO=no
+  note "the Wi-Fi client is turned off (Settings, Network: access point only): it stays off"
+fi
 
 say "Joining the Wi-Fi \"$STA_SSID\" ($STA_IFACE)"
 if [[ -n "$sta_con" && "$sta_con" != "$STA_CON" ]]; then
   # A connection made earlier (e.g. by Raspberry Pi Imager: "preconfigured"): keep it and just adjust it, so
   # running this over that same Wi-Fi doesn't drop the SSH session.
   note "using the existing connection \"$sta_con\""
-  args=(802-11-wireless.powersave 2 connection.autoconnect yes connection.autoconnect-retries 0
+  args=(802-11-wireless.powersave 2 connection.autoconnect "$STA_AUTO" connection.autoconnect-retries 0
     connection.autoconnect-priority 10 connection.interface-name "$STA_IFACE")
   run nmcli connection modify "$sta_con" "${args[@]}"  # no reconnect: the change applies from the next one
   if [[ -n "${STA_PASS+x}" ]]; then
@@ -318,7 +337,8 @@ else
   uuid="$(kf_get uuid "$STA_FILE")"
   [[ -n "$uuid" ]] || uuid="$(cat /proc/sys/kernel/random/uuid)"
   put_file "$STA_FILE" 600 secret < <(
-    printf '[connection]\nid=%s\nuuid=%s\ntype=wifi\ninterface-name=%s\nautoconnect=true\n' "$STA_CON" "$uuid" "$STA_IFACE"
+    printf '[connection]\nid=%s\nuuid=%s\ntype=wifi\ninterface-name=%s\nautoconnect=%s\n' "$STA_CON" "$uuid" "$STA_IFACE" \
+      "$([[ $STA_AUTO == yes ]] && echo true || echo false)"
     printf 'autoconnect-priority=10\n# 0: never give up (NetworkManager stops after 4 tries otherwise)\nautoconnect-retries=0\n\n'
     printf '[wifi]\nmode=infrastructure\nssid=%s\n# 2: power saving off (it makes the shared radio drop frames)\npowersave=2\n\n' "$(kf_escape "$STA_SSID")"
     [[ -n "$STA_PASS" ]] && printf '[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n' "$STA_PASS"
@@ -355,6 +375,13 @@ put_file "$SBIN/caltreat-ap-channel" 755 < <(template caltreat-ap-channel)
 put_file "$UNITS/caltreat-ap-channel.service" 644 < <(template caltreat-ap-channel.service)
 put_file "$UNITS/caltreat-ap-channel.timer" 644 < <(template caltreat-ap-channel.timer)
 put_file "$DISPATCH_FILE" 755 < <(template 90-caltreat-ap)
+put_file "$SBIN/caltreat-sta" 755 < <(template caltreat-sta)
+put_file "$STA_UNIT" 644 < <(template caltreat-sta@.service)
+if [[ -n "$APP_UID" ]]; then
+  put_file "$POLKIT_FILE" 644 < <(template 50-caltreat-sta.rules)
+else
+  del_file "$POLKIT_FILE"
+fi
 put_file "$NMCONF_FILE" 644 <<EOF
 # Installed by Caltreat's pi/setup/network.sh
 [device-caltreat-ap]
@@ -402,7 +429,7 @@ if [[ -n "$ROOT" && -z "${CALTREAT_SETUP_APPLY:-}" ]]; then
   note "(CALTREAT_SETUP_ROOT is set: files only, nothing started)"
 else
   if changed "$UNITS/caltreat-uap0.service" "$UNITS/caltreat-ap-channel.service" "$UNITS/caltreat-ap-channel.timer" \
-    "$SBIN/caltreat-uap0" ${PRIO_FILE:+"$PRIO_FILE"}; then
+    "$SBIN/caltreat-uap0" "$STA_UNIT" ${PRIO_FILE:+"$PRIO_FILE"}; then
     run systemctl daemon-reload
   fi
   if [[ -n "$PRIO_FILE" ]] && changed "$PRIO_FILE"; then

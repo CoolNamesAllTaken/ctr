@@ -1,0 +1,40 @@
+#!/bin/bash
+# Turns the Pi's Wi-Fi client (wlan0, joining the "caltreat" Wi-Fi) off or on. Off = access point only: on the
+# built-in Wi-Fi's one radio that is the most stable (no scans or roams of wlan0 taking the radio from the phones,
+# no access point moves). Installed by pi/setup/network.sh as /usr/local/sbin/caltreat-sta, run as root by
+# caltreat-sta@off.service / caltreat-sta@on.service, which the app's user may start (polkit rule
+# 50-caltreat-sta.rules; nothing else). It only changes whether the joined Wi-Fi connects: never names or passwords.
+#
+#   caltreat-sta off   connection down, autoconnect off (stays off after a reboot); marks /etc/caltreat/sta-off
+#   caltreat-sta on    autoconnect on, connect now; the access point then follows its channel (once)
+set -euo pipefail
+# shellcheck source=/dev/null
+. "${CALTREAT_NETWORK_CONF:-/etc/caltreat/network.conf}"
+STA_OFF="${CALTREAT_STA_OFF:-/etc/caltreat/sta-off}"
+STA_CON="${STA_CON:-caltreat-sta}"
+log() { logger -t caltreat-ap "$*" 2>/dev/null || true; echo "$*"; }
+
+case "${1:-}" in
+  off)
+    printf 'Wi-Fi client turned off (access point only) %s\n' "$(date -Is)" > "$STA_OFF"
+    nmcli connection modify "$STA_CON" connection.autoconnect no
+    if nmcli -t -f NAME connection show --active | grep -qxF "$STA_CON"; then
+      nmcli connection down "$STA_CON" >/dev/null || true
+    fi
+    log "Wi-Fi client ($STA_CON on $STA_IFACE) off: access point only, staying on its channel"
+    ;;
+  on)
+    rm -f "$STA_OFF"
+    nmcli connection modify "$STA_CON" connection.autoconnect yes
+    log "Wi-Fi client ($STA_CON on $STA_IFACE) on: joining $STA_SSID"
+    if ! nmcli --wait 20 connection up "$STA_CON" >/dev/null 2>&1; then
+      log "$STA_SSID isn't in range now: NetworkManager keeps trying"
+    fi
+    # one channel check now (the access point moves to wlan0's channel if it must: one restart, logged)
+    "${CALTREAT_SBIN:-/usr/local/sbin}/caltreat-ap-channel" || true
+    ;;
+  *)
+    echo "usage: $0 on|off" >&2
+    exit 2
+    ;;
+esac

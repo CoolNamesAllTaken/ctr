@@ -64,6 +64,7 @@ class Pi:
             "CALTREAT_NETWORK_CONF": str(self.root / "etc/caltreat/network.conf"),
             "CALTREAT_SBIN": str(self.root / "usr/local/sbin"), "CALTREAT_LOCK": str(tmp / "lock"),
             "CALTREAT_AP_STATE": str(tmp / "ap-state"),
+            "CALTREAT_STA_OFF": str(self.root / "etc/caltreat/sta-off"),
         }
 
     def run(self, *args, script=SETUP / "network.sh", **env):
@@ -99,7 +100,7 @@ def test_shellcheck():
     if not Path(sc).exists():
         pytest.skip("no shellcheck")
     files = [SETUP / "network.sh", *[SETUP / "files" / f for f in ("caltreat-uap0", "caltreat-ap-channel",
-                                                                   "90-caltreat-ap")]]
+                                                                   "90-caltreat-ap", "caltreat-sta")]]
     r = subprocess.run([sc, "-x", *map(str, files)], capture_output=True, text=True)
     assert r.returncode == 0, r.stdout
 
@@ -338,3 +339,93 @@ def test_sound_priority_and_power_save(pi):
     assert r.returncode == 0 and not prio.exists()
     r = pi.run(AP_PASS=SECRET_AP, STA_PASS=SECRET_STA, APP_USER="no-such-user-xyz")
     assert r.returncode == 0 and "no user" in r.stderr
+
+
+# ---- the "Join caltreat" switch: caltreat-sta (root, via caltreat-sta@on/off.service and a polkit rule)
+STA_OFF = "etc/caltreat/sta-off"
+RULE = "etc/polkit-1/rules.d/50-caltreat-sta.rules"
+
+
+def me():
+    import getpass
+    return getpass.getuser()
+
+
+def test_switch_is_installed_for_the_app_user_only(pi):
+    r = pi.run(AP_PASS=SECRET_AP, STA_PASS=SECRET_STA, APP_USER=me(), CALTREAT_SETUP_APPLY="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    rule = pi.file(RULE).read_text()
+    assert f'subject.user == "{me()}"' in rule and '"org.freedesktop.systemd1.manage-units"' in rule
+    assert 'action.lookup("verb") == "start"' in rule
+    assert sorted(set(__import__("re").findall(r'"(caltreat-sta@\w+\.service)"', rule))) == \
+        ["caltreat-sta@off.service", "caltreat-sta@on.service"]
+    assert "@" not in rule.replace("caltreat-sta@", "")  # every placeholder filled
+    unit = pi.file("etc/systemd/system/caltreat-sta@.service").read_text()
+    assert "ExecStart=/usr/local/sbin/caltreat-sta %i" in unit and "Type=oneshot" in unit
+    assert mode(pi.file("usr/local/sbin/caltreat-sta")) == "0o755"
+    conf = pi.file("etc/caltreat/network.conf").read_text()
+    assert "STA_TOGGLE=1" in conf and "STA_CON=caltreat-sta" in conf
+    assert "systemctl daemon-reload" in r.log
+    # no such user: no rule, and the page shows the switch disabled
+    r = pi.run(APP_USER="no-such-user-xyz")
+    assert r.returncode == 0 and not pi.file(RULE).exists()
+    assert "STA_TOGGLE=0" in pi.file("etc/caltreat/network.conf").read_text()
+
+
+def sta(pi, arg):
+    return pi.run(arg, script=pi.file("usr/local/sbin/caltreat-sta"))
+
+
+def test_switch_off_and_on(pi):
+    assert pi.run(AP_PASS=SECRET_AP, STA_PASS=SECRET_STA, APP_USER=me()).returncode == 0
+    (pi.sys / "class/net/uap0").mkdir()
+    pi.set("apchan", "6\n")
+    pi.set("active", "caltreat-ap\ncaltreat-sta\n")
+    r = sta(pi, "off")
+    assert r.returncode == 0, r.stderr
+    assert "nmcli connection modify caltreat-sta connection.autoconnect no" in r.log
+    assert "nmcli connection down caltreat-sta" in r.log
+    assert "nmcli connection up" not in r.log  # the access point isn't touched
+    assert pi.file(STA_OFF).exists() and "access point only" in r.stdout
+
+    # access point only: the channel helper never moves or restarts it, even with wlan0 somehow joined elsewhere
+    pi.set("link", "Connected to 11:22:33:44:55:66 (on wlan0)\n")
+    pi.set("stachan", "11")
+    pi.set("scan", "36:70:caltreat\n")
+    pi.set("active", "caltreat-ap\n")
+    for _ in range(2):
+        r = channel(pi)
+        assert "modify" not in r.log and "connection up" not in r.log, r.log
+    pi.set("active", "")  # ... but starts it if it is down
+    r = channel(pi)
+    assert "modify" not in r.log and r.log.count("nmcli connection up caltreat-ap") == 1
+
+    # rerunning the setup keeps it off (the saved connection's autoconnect stays off)
+    r = pi.run(APP_USER=me())
+    assert r.returncode == 0 and "autoconnect=false\n" in pi.file(STA).read_text() and "stays off" in r.stdout
+
+    pi.set("active", "caltreat-ap\n")
+    r = sta(pi, "on")
+    assert r.returncode == 0, r.stderr
+    assert not pi.file(STA_OFF).exists()
+    assert "nmcli connection modify caltreat-sta connection.autoconnect yes" in r.log
+    assert "nmcli --wait 20 connection up caltreat-sta" in r.log
+    # then one channel check: joined on 11, the AP moves there once
+    assert "802-11-wireless.channel 11" in r.log and r.log.count("nmcli connection up caltreat-ap") == 1
+    assert pi.run(APP_USER=me()).returncode == 0 and "autoconnect=true\n" in pi.file(STA).read_text()
+    assert sta(pi, "bogus").returncode == 2
+
+
+def test_switch_with_an_existing_connection_and_undo(pi):
+    pi.set("conns", "preconfigured:802-11-wireless\n")
+    pi.set("ssid-preconfigured", "caltreat\n")
+    assert pi.run(AP_PASS=SECRET_AP, STA_PASS=SECRET_STA, APP_USER=me()).returncode == 0
+    assert "STA_CON=preconfigured" in pi.file("etc/caltreat/network.conf").read_text()
+    assert "nmcli connection modify preconfigured connection.autoconnect no" in sta(pi, "off").log
+    r = pi.run(APP_USER=me(), CALTREAT_SETUP_APPLY="1")
+    assert "nmcli connection modify preconfigured 802-11-wireless.powersave 2 connection.autoconnect no" in r.log
+    r = pi.run("--undo", APP_USER=me(), CALTREAT_SETUP_APPLY="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "nmcli connection modify preconfigured connection.autoconnect yes" in r.log  # back on
+    for f in (STA_OFF, RULE, "etc/systemd/system/caltreat-sta@.service", "usr/local/sbin/caltreat-sta"):
+        assert not pi.file(f).exists(), f
